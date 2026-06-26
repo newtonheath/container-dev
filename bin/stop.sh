@@ -10,7 +10,7 @@ set -euo pipefail
 
 stop_container() {
   local name="$1"
-  if container list 2>/dev/null | awk 'NR>1{print $NF}' | grep -qx "$name"; then
+  if container list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$name"; then
     echo ">> Stopping $name ..."
     container stop "$name"
     container delete "$name"
@@ -24,7 +24,7 @@ if [[ $# -ge 1 ]]; then
   stop_container "${1}-dev"
 else
   echo ">> Stopping all dev containers..."
-  for name in $(container list 2>/dev/null | awk 'NR>1{print $NF}' | grep -- '-dev$'); do
+  for name in $(container list 2>/dev/null | awk 'NR>1{print $1}' | grep -- '-dev$'); do
     stop_container "$name"
   done
 fi

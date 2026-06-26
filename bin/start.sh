@@ -172,7 +172,7 @@ fi
 # ---------------------------------------------------------------------------
 # check if container is already running
 # ---------------------------------------------------------------------------
-if container list 2>/dev/null | awk 'NR>1{print $NF}' | grep -qx "$CONTAINER_NAME"; then
+if container list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$CONTAINER_NAME"; then
   echo ">> Container '$CONTAINER_NAME' is already running."
   echo ""
   echo "  SSH:    ssh container-${PROFILE}"

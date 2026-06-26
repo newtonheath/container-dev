@@ -102,6 +102,24 @@ Uses Claude Code via Vertex AI. Authentication works by mounting your host's gcl
 
 **Per-profile SSH port:** 2222
 
+## Connecting VS Code
+
+The `start.sh` script automatically adds an SSH host entry to `~/.ssh/config`, so VS Code can connect with no manual configuration.
+
+1. **Open VS Code** on your Mac
+2. Open the Command Palette (`Cmd+Shift+P`)
+3. Type **"Remote-SSH: Connect to Host..."** and select it
+4. Choose **`container-vertex`** (or `container-<profile>` for other profiles) from the list
+5. VS Code will open a new window connected to the container
+6. Open the `/workspace` folder — this is your bind-mounted repo
+
+Once connected, the VS Code terminal runs inside the container. Run `claude` there to start the AI agent — it will use Vertex AI automatically with no setup prompts.
+
+To open directly from the command line:
+```bash
+code --remote ssh-remote+container-vertex /workspace
+```
+
 ## Creating a New Profile
 
 To add support for a different AI tool or auth method:
