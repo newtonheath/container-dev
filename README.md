@@ -102,6 +102,19 @@ Uses Claude Code via Vertex AI. Authentication works by mounting your host's gcl
 
 **Per-profile SSH port:** 2222
 
+### claude-pro (Claude Pro / API Key)
+
+Uses Claude Code with an Anthropic API key. No gcloud or Vertex AI dependencies — just your API key.
+
+**Setup:**
+1. Copy and edit the env file:
+   ```bash
+   cp profiles/claude-pro/env.example profiles/claude-pro/.env
+   ```
+2. Add your Anthropic API key to `.env`
+
+**Per-profile SSH port:** 2223
+
 ### Naming Convention
 
 For a profile named `claude-vertex`:
@@ -176,7 +189,8 @@ container-dev/
 │   ├── start.sh              # Build and launch a container
 │   └── stop.sh               # Stop and remove a container
 ├── profiles/
-│   └── claude-vertex/
+│   ├── claude-vertex/
+│   └── claude-pro/
 │       ├── Dockerfile
 │       ├── sshd_config
 │       ├── entrypoint.sh

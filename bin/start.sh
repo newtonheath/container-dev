@@ -158,15 +158,17 @@ if [[ ! -f "$KEY_FILE" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# gcloud ADC credentials
+# gcloud ADC credentials (only for Vertex AI profiles)
 # ---------------------------------------------------------------------------
-ADC_FILE="$HOME/.config/gcloud/application_default_credentials.json"
 ADC_MOUNT_ARGS=()
-if [[ -f "$ADC_FILE" ]]; then
-  ADC_MOUNT_ARGS=(--volume "${ADC_FILE}:/root/.config/gcloud/application_default_credentials.json:ro")
-else
-  echo "WARN: gcloud ADC not found at $ADC_FILE" >&2
-  echo "  Run 'gcloud auth application-default login' on the host to set up credentials." >&2
+if grep -q 'CLAUDE_CODE_USE_VERTEX' "$ENV_FILE" 2>/dev/null; then
+  ADC_FILE="$HOME/.config/gcloud/application_default_credentials.json"
+  if [[ -f "$ADC_FILE" ]]; then
+    ADC_MOUNT_ARGS=(--volume "${ADC_FILE}:/root/.config/gcloud/application_default_credentials.json:ro")
+  else
+    echo "WARN: gcloud ADC not found at $ADC_FILE" >&2
+    echo "  Run 'gcloud auth application-default login' on the host to set up credentials." >&2
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -205,7 +207,7 @@ container run --detach \
   --publish "${SSH_PORT}:22" \
   --volume "${WORKSPACE}:/workspace" \
   --volume "${KEY_FILE}.pub:/tmp/pubkey/authorized_keys:ro" \
-  "${ADC_MOUNT_ARGS[@]}" \
+  ${ADC_MOUNT_ARGS[@]+"${ADC_MOUNT_ARGS[@]}"} \
   --env-file "$ENV_FILE" \
   "$IMAGE_NAME"
 
