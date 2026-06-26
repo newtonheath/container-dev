@@ -21,4 +21,6 @@ cat > /root/.claude/settings.json <<SETTINGS
 }
 SETTINGS
 
+echo 'cd /workspace' >> /root/.bashrc
+
 exec /usr/sbin/sshd -D
