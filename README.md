@@ -31,18 +31,18 @@ Containerized AI development environments for macOS. Run Claude Code (or other A
 
 ```bash
 # 1. Create your env file from the template
-cp profiles/vertex/env.example profiles/vertex/.env
+cp profiles/claude-vertex/env.example profiles/claude-vertex/.env
 # Edit .env with your GCP project ID and region
 
 # 2. Launch a container pointing at your repo
-./bin/start.sh vertex ~/repos/my-project
+./bin/start.sh claude-vertex ~/repos/my-project
 
 # 3. Connect
-ssh container-vertex
-# Or from VS Code: Remote-SSH → connect to "container-vertex"
+ssh claude-vertex-host
+# Or from VS Code: Remote-SSH → connect to "claude-vertex-host"
 
 # 4. Stop when done
-./bin/stop.sh vertex
+./bin/stop.sh claude-vertex
 ```
 
 ## Usage
@@ -75,20 +75,20 @@ ssh container-vertex
 
 ```bash
 # Default (medium) resources
-./bin/start.sh vertex ~/repos/my-project
+./bin/start.sh claude-vertex ~/repos/my-project
 
 # Large preset for heavy workloads
-./bin/start.sh vertex ~/repos/my-project --size large
+./bin/start.sh claude-vertex ~/repos/my-project --size large
 
 # Custom resources
-./bin/start.sh vertex ~/repos/my-project --cpus 6 --mem 8g
+./bin/start.sh claude-vertex ~/repos/my-project --cpus 6 --mem 8g
 ```
 
 ## Profiles
 
 Each profile is a directory under `profiles/` containing a `Dockerfile`, SSH and entrypoint configs, and an `env.example` template.
 
-### vertex (Google Cloud Vertex AI)
+### claude-vertex (Google Cloud Vertex AI)
 
 Uses Claude Code via Vertex AI. Authentication works by mounting your host's gcloud Application Default Credentials (read-only) into the container.
 
@@ -96,11 +96,21 @@ Uses Claude Code via Vertex AI. Authentication works by mounting your host's gcl
 1. Authenticate on the host: `gcloud auth application-default login`
 2. Copy and edit the env file:
    ```bash
-   cp profiles/vertex/env.example profiles/vertex/.env
+   cp profiles/claude-vertex/env.example profiles/claude-vertex/.env
    ```
 3. Fill in your GCP project ID and region in `.env`
 
 **Per-profile SSH port:** 2222
+
+### Naming Convention
+
+For a profile named `claude-vertex`:
+
+| Resource       | Name                    |
+|----------------|-------------------------|
+| Image          | `claude-vertex-img`       |
+| Container      | `claude-vertex-container` |
+| SSH host       | `claude-vertex-host`      |
 
 ## Connecting VS Code
 
@@ -109,7 +119,7 @@ The `start.sh` script automatically adds an SSH host entry to `~/.ssh/config`, s
 1. **Open VS Code** on your Mac
 2. Open the Command Palette (`Cmd+Shift+P`)
 3. Type **"Remote-SSH: Connect to Host..."** and select it
-4. Choose **`container-vertex`** (or `container-<profile>` for other profiles) from the list
+4. Choose **`claude-vertex-host`** (or `<profile>-host` for other profiles) from the list
 5. VS Code will open a new window connected to the container
 6. Open the `/workspace` folder — this is your bind-mounted repo
 
@@ -117,7 +127,7 @@ Once connected, the VS Code terminal runs inside the container. Run `claude` the
 
 To open directly from the command line:
 ```bash
-code --remote ssh-remote+container-vertex /workspace
+code --remote ssh-remote+claude-vertex-host /workspace
 ```
 
 ## Creating a New Profile
@@ -144,10 +154,10 @@ To add support for a different AI tool or auth method:
    ```bash
    profile_port() {
      case "$1" in
-       vertex)       echo 2222 ;;
-       claude-pro)   echo 2223 ;;
-       my-profile)   echo 2224 ;;
-       *)            echo 2225 ;;
+       claude-vertex)  echo 2222 ;;
+       claude-pro)     echo 2223 ;;
+       my-profile)     echo 2224 ;;
+       *)              echo 2225 ;;
      esac
    }
    ```
@@ -166,7 +176,7 @@ container-dev/
 │   ├── start.sh              # Build and launch a container
 │   └── stop.sh               # Stop and remove a container
 ├── profiles/
-│   └── vertex/
+│   └── claude-vertex/
 │       ├── Dockerfile
 │       ├── sshd_config
 │       ├── entrypoint.sh
@@ -186,11 +196,11 @@ container list
 container image list
 
 # Stop a specific profile's container
-./bin/stop.sh vertex
+./bin/stop.sh claude-vertex
 
 # Stop all dev containers
 ./bin/stop.sh
 
 # Remove an image (forces rebuild on next start)
-container image rm vertex-dev-img:latest
+container image rm claude-vertex-img:latest
 ```

@@ -3,8 +3,8 @@
 # stop.sh — stop and remove a profile-based dev container
 #
 # Usage:
-#   ./bin/stop.sh vertex    # stop the vertex-dev container
-#   ./bin/stop.sh           # stop all *-dev containers from this project
+#   ./bin/stop.sh claude-vertex    # stop the claude-vertex-container
+#   ./bin/stop.sh                  # stop all *-container containers from this project
 #
 set -euo pipefail
 
@@ -21,10 +21,10 @@ stop_container() {
 }
 
 if [[ $# -ge 1 ]]; then
-  stop_container "${1}-dev"
+  stop_container "${1}-container"
 else
   echo ">> Stopping all dev containers..."
-  for name in $(container list 2>/dev/null | awk 'NR>1{print $1}' | grep -- '-dev$'); do
+  for name in $(container list 2>/dev/null | awk 'NR>1{print $1}' | grep -- '-container$'); do
     stop_container "$name"
   done
 fi

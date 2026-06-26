@@ -4,9 +4,9 @@
 #
 # Usage:
 #   ./bin/start.sh <profile> <workspace>  [options]
-#   ./bin/start.sh vertex ~/repos/myapp
-#   ./bin/start.sh vertex ~/repos/myapp --size large
-#   ./bin/start.sh vertex ~/repos/myapp --cpus 6 --mem 8g
+#   ./bin/start.sh claude-vertex ~/repos/myapp
+#   ./bin/start.sh claude-vertex ~/repos/myapp --size large
+#   ./bin/start.sh claude-vertex ~/repos/myapp --cpus 6 --mem 8g
 #
 set -euo pipefail
 
@@ -22,8 +22,8 @@ KEYS_DIR="$PROJECT_DIR/.keys"
 # ---------------------------------------------------------------------------
 profile_port() {
   case "$1" in
-    vertex)     echo 2222 ;;
-    claude-pro) echo 2223 ;;
+    claude-vertex) echo 2222 ;;
+    claude-pro)    echo 2223 ;;
     *)          echo 2224 ;;
   esac
 }
@@ -115,8 +115,8 @@ if [[ ! -d "$WORKSPACE" ]]; then
   exit 1
 fi
 
-CONTAINER_NAME="${PROFILE}-dev"
-IMAGE_NAME="${PROFILE}-dev-img"
+CONTAINER_NAME="${PROFILE}-container"
+IMAGE_NAME="${PROFILE}-img"
 SSH_PORT="${SSH_PORT:-$(profile_port "$PROFILE")}"
 
 # apply size preset, then let explicit --cpus/--mem override
@@ -175,8 +175,8 @@ fi
 if container list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$CONTAINER_NAME"; then
   echo ">> Container '$CONTAINER_NAME' is already running."
   echo ""
-  echo "  SSH:    ssh container-${PROFILE}"
-  echo "  VSCode: code --remote ssh-remote+container-${PROFILE} /workspace"
+  echo "  SSH:    ssh ${PROFILE}-host"
+  echo "  VSCode: code --remote ssh-remote+${PROFILE}-host /workspace"
   echo ""
   echo "  Stop:   ./bin/stop.sh $PROFILE"
   exit 0
@@ -212,7 +212,7 @@ container run --detach \
 # ---------------------------------------------------------------------------
 # auto-configure ~/.ssh/config
 # ---------------------------------------------------------------------------
-SSH_HOST="container-${PROFILE}"
+SSH_HOST="${PROFILE}-host"
 SSH_CONFIG="$HOME/.ssh/config"
 mkdir -p "$HOME/.ssh"
 
