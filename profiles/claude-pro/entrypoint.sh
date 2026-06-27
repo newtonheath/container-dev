@@ -10,7 +10,7 @@ mkdir -p /root/.claude
 cat > /root/.claude/settings.json <<SETTINGS
 {
   "theme": "dark",
-  "model": "claude-sonnet-4-5-20250514",
+  "model": "claude-sonnet-4-6",
   "env": {
     "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY}"
   }
