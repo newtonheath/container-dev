@@ -16,7 +16,7 @@ Containerized AI development environments for macOS. Run Claude Code (or other A
 └───────────────────────────────┘      └──────────────────────────────┘
 ```
 
-- **Profiles** define how the container authenticates (Vertex AI, API key, etc.) — each has its own Dockerfile, env config, and SSH port
+- **Profiles** define how the container authenticates (Vertex AI, API key, or browser OAuth) — each has its own Dockerfile, env config, and SSH port
 - Code lives on the host and is bind-mounted into the container
 - SSH keypair is auto-generated (your personal keys are never used)
 - Resource limits (CPU, memory) are set per launch
@@ -25,7 +25,8 @@ Containerized AI development environments for macOS. Run Claude Code (or other A
 
 - macOS with Apple's `container` CLI (`container --version`)
 - VS Code with the [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) extension
-- For Vertex AI: `gcloud` CLI installed and authenticated (`gcloud auth application-default login`)
+- For `claude-vertex`: `gcloud` CLI installed and authenticated (`gcloud auth application-default login`)
+- For `claude-pro-api`: an Anthropic API key
 
 ## Quick Start
 
@@ -86,11 +87,17 @@ ssh claude-vertex-host
 
 ## Profiles
 
-Each profile is a directory under `profiles/` containing a `Dockerfile`, SSH and entrypoint configs, and an `env.example` template.
+Three profiles are available, each using a different authentication method:
+
+| Profile | Auth method | SSH port |
+|---|---|---|
+| `claude-vertex` | Google Cloud Vertex AI (gcloud ADC) | 2222 |
+| `claude-pro-api` | Anthropic API key | 2223 |
+| `claude-pro-web` | Browser OAuth (Claude.ai subscription) | 2224 |
 
 ### claude-vertex (Google Cloud Vertex AI)
 
-Uses Claude Code via Vertex AI. Authentication works by mounting your host's gcloud Application Default Credentials (read-only) into the container.
+Authenticates via gcloud Application Default Credentials mounted read-only from the host — no API key required.
 
 **Setup:**
 1. Authenticate on the host: `gcloud auth application-default login`
@@ -100,20 +107,31 @@ Uses Claude Code via Vertex AI. Authentication works by mounting your host's gcl
    ```
 3. Fill in your GCP project ID and region in `.env`
 
-**Per-profile SSH port:** 2222
+### claude-pro-api (Anthropic API key)
 
-### claude-pro (Claude Pro / API Key)
-
-Uses Claude Code with an Anthropic API key. No gcloud or Vertex AI dependencies — just your API key.
+Authenticates using an Anthropic API key injected via `.env`. No browser login or gcloud required.
 
 **Setup:**
 1. Copy and edit the env file:
    ```bash
-   cp profiles/claude-pro/env.example profiles/claude-pro/.env
+   cp profiles/claude-pro-api/env.example profiles/claude-pro-api/.env
    ```
-2. Add your Anthropic API key to `.env`
+2. Add your `ANTHROPIC_API_KEY` to `.env`
 
-**Per-profile SSH port:** 2223
+### claude-pro-web (Browser OAuth)
+
+Authenticates via Claude.ai browser login — no API key needed. You authenticate once interactively; the OAuth token is stored in `.auth/claude-pro-web/` on the host and mounted back into the container on every subsequent start, so you are not prompted again until the token expires.
+
+**Setup:** none — no `.env` file required.
+
+**First run:**
+```bash
+./bin/start.sh claude-pro-web ~/repos/my-project
+ssh claude-pro-web-host
+claude   # prompts for browser auth on first use only
+```
+
+**Token persistence:** the credential file lives at `.auth/claude-pro-web/` on the host (gitignored). Deleting and recreating the container does not invalidate it — only token expiry (set by Anthropic) will require re-authentication.
 
 ### Naming Convention
 
@@ -168,9 +186,10 @@ To add support for a different AI tool or auth method:
    profile_port() {
      case "$1" in
        claude-vertex)  echo 2222 ;;
-       claude-pro)     echo 2223 ;;
-       my-profile)     echo 2224 ;;
-       *)              echo 2225 ;;
+       claude-pro-api) echo 2223 ;;
+       claude-pro-web) echo 2224 ;;
+       my-profile)     echo 2225 ;;
+       *)              echo 2226 ;;
      esac
    }
    ```
@@ -189,13 +208,19 @@ container-dev/
 │   ├── start.sh              # Build and launch a container
 │   └── stop.sh               # Stop and remove a container
 ├── profiles/
-│   ├── claude-vertex/
-│   └── claude-pro/
+│   ├── claude-vertex/        # Vertex AI auth (gcloud ADC)
+│   ├── claude-pro-api/       # API key auth
+│   │   ├── Dockerfile
+│   │   ├── sshd_config
+│   │   ├── entrypoint.sh
+│   │   ├── env.example       # Committed template
+│   │   └── .env              # Your actual config (gitignored)
+│   └── claude-pro-web/       # Browser OAuth auth
 │       ├── Dockerfile
 │       ├── sshd_config
-│       ├── entrypoint.sh
-│       ├── env.example       # Committed template
-│       └── .env              # Your actual config (gitignored)
+│       └── entrypoint.sh     # No .env needed
+├── .auth/                    # Persisted browser OAuth tokens (gitignored)
+│   └── claude-pro-web/       # Mounted as /root/.claude in container
 ├── .keys/                    # Auto-generated SSH keypair (gitignored)
 └── .gitignore
 ```
