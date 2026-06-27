@@ -7,16 +7,16 @@ Containerized AI development environments for macOS. Run Claude Code (or other A
 ```
 ┌─── Host (macOS) ──────────────┐      ┌─── Container (Fedora 44) ────┐
 │                               │      │                              │
-│  VS Code ──── SSH ────────────┼─────►│  Claude Code (AI agent)      │
-│                               │      │  gcloud CLI                  │
+│  VS Code / SSH ───────────────┼─────►│  Claude Code (TUI or IDE)    │
+│                               │      │                              │
 │  ~/repos/my-project ──────────┼─────►│  /workspace (bind mount)     │
 │                               │      │                              │
-│  ~/.config/gcloud/ADC ────────┼─────►│  Vertex AI auth (read-only)  │
+│  Profile (.env, auth) ────────┼─────►│  Auth + config (per profile) │
 │                               │      │                              │
 └───────────────────────────────┘      └──────────────────────────────┘
 ```
 
-- The container handles all AI agent interactions — not the host
+- **Profiles** define how the container authenticates (Vertex AI, API key, etc.) — each has its own Dockerfile, env config, and SSH port
 - Code lives on the host and is bind-mounted into the container
 - SSH keypair is auto-generated (your personal keys are never used)
 - Resource limits (CPU, memory) are set per launch
