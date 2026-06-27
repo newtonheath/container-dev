@@ -22,9 +22,10 @@ KEYS_DIR="$PROJECT_DIR/.keys"
 # ---------------------------------------------------------------------------
 profile_port() {
   case "$1" in
-    claude-vertex) echo 2222 ;;
-    claude-pro)    echo 2223 ;;
-    *)          echo 2224 ;;
+    claude-vertex)  echo 2222 ;;
+    claude-pro-api) echo 2223 ;;
+    claude-pro-web) echo 2224 ;;
+    *)              echo 2225 ;;
   esac
 }
 
@@ -137,14 +138,12 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# env file
+# env file (optional — used if present, skipped if absent)
 # ---------------------------------------------------------------------------
 ENV_FILE="$PROFILE_DIR/.env"
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "ERROR: $ENV_FILE not found." >&2
-  echo "  Copy env.example to .env and fill in your values:" >&2
-  echo "  cp $PROFILE_DIR/env.example $ENV_FILE" >&2
-  exit 1
+ENV_FILE_ARGS=()
+if [[ -f "$ENV_FILE" ]]; then
+  ENV_FILE_ARGS=(--env-file "$ENV_FILE")
 fi
 
 # ---------------------------------------------------------------------------
@@ -155,6 +154,16 @@ KEY_FILE="$KEYS_DIR/container_ed25519"
 if [[ ! -f "$KEY_FILE" ]]; then
   echo ">> Generating dedicated SSH keypair for container access..."
   ssh-keygen -t ed25519 -f "$KEY_FILE" -N "" -C "container-dev"
+fi
+
+# ---------------------------------------------------------------------------
+# persistent ~/.claude auth volume (only for browser-auth profiles)
+# ---------------------------------------------------------------------------
+AUTH_MOUNT_ARGS=()
+if [[ "$PROFILE" == "claude-pro-web" ]]; then
+  AUTH_DIR="$PROJECT_DIR/.auth/${PROFILE}"
+  mkdir -p "$AUTH_DIR"
+  AUTH_MOUNT_ARGS=(--volume "${AUTH_DIR}:/root/.claude")
 fi
 
 # ---------------------------------------------------------------------------
@@ -207,8 +216,9 @@ container run --detach \
   --publish "${SSH_PORT}:22" \
   --volume "${WORKSPACE}:/workspace" \
   --volume "${KEY_FILE}.pub:/tmp/pubkey/authorized_keys:ro" \
+  ${AUTH_MOUNT_ARGS[@]+"${AUTH_MOUNT_ARGS[@]}"} \
   ${ADC_MOUNT_ARGS[@]+"${ADC_MOUNT_ARGS[@]}"} \
-  --env-file "$ENV_FILE" \
+  ${ENV_FILE_ARGS[@]+"${ENV_FILE_ARGS[@]}"} \
   "$IMAGE_NAME"
 
 # ---------------------------------------------------------------------------
