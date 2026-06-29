@@ -30,13 +30,13 @@ Port map lives in `profile_port()` in `bin/start.sh`. Update it whenever adding 
 | Source (host) | Destination (container) | Who sets it up |
 |---|---|---|
 | `<workspace>` | `/workspace` | always, `start.sh` |
-| `.keys/container_ed25519.pub` | `/tmp/pubkey/authorized_keys` (ro) | always, `start.sh` |
+| `~/.config/container-dev/keys/container_ed25519.pub` | `/tmp/pubkey/authorized_keys` (ro) | always, `start.sh` |
 | `~/.config/gcloud/application_default_credentials.json` | `/root/.config/gcloud/...` (ro) | vertex only, `start.sh` |
-| `.auth/claude-pro-web/` | `/root/.claude/` | web only, `start.sh` |
+| `~/.config/container-dev/auth/claude-pro-web/` | `/root/.claude/` | web only, `start.sh` |
 
 ## SSH keypair
 
-A single ed25519 keypair at `.keys/container_ed25519` is shared across all profiles. Generated once by `start.sh` if absent. Never uses the user's personal SSH keys. `~/.ssh/config` entries are auto-appended on first start using the `${PROFILE}-host` naming pattern.
+A single ed25519 keypair at `~/.config/container-dev/keys/container_ed25519` is shared across all profiles. Generated once by `start.sh` if absent. Never uses the user's personal SSH keys. `~/.ssh/config` entries are auto-appended on first start using the `${PROFILE}-host` naming pattern. Keys live in `~/.config` (not the repo) so SSH config entries remain valid regardless of where the repo is placed in the filesystem.
 
 ## .env handling
 
@@ -44,7 +44,7 @@ A single ed25519 keypair at `.keys/container_ed25519` is shared across all profi
 
 ## Browser OAuth token persistence (claude-pro-web)
 
-`/root/.claude/` in the container is bind-mounted from `.auth/claude-pro-web/` on the host (gitignored). `entrypoint.sh` overwrites `settings.json` on each start, but the OAuth credential file (written by Claude Code after browser auth) is a separate file and persists across container delete/recreate. Token expiry is set by Anthropic, not container lifecycle.
+`/root/.claude/` in the container is bind-mounted from `~/.config/container-dev/auth/claude-pro-web/` on the host. `entrypoint.sh` overwrites `settings.json` on each start, but the OAuth credential file (written by Claude Code after browser auth) is a separate file and persists across container delete/recreate. Token expiry is set by Anthropic, not container lifecycle.
 
 ## Naming conventions
 

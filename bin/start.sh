@@ -15,7 +15,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-KEYS_DIR="$PROJECT_DIR/.keys"
+KEYS_DIR="$HOME/.config/container-dev/keys"
 
 # ---------------------------------------------------------------------------
 # per-profile port map
@@ -161,7 +161,7 @@ fi
 # ---------------------------------------------------------------------------
 AUTH_MOUNT_ARGS=()
 if [[ "$PROFILE" == "claude-pro-web" ]]; then
-  AUTH_DIR="$PROJECT_DIR/.auth/${PROFILE}"
+  AUTH_DIR="$HOME/.config/container-dev/auth/${PROFILE}"
   mkdir -p "$AUTH_DIR"
   AUTH_MOUNT_ARGS=(--volume "${AUTH_DIR}:/root/.claude")
 fi
