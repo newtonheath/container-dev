@@ -264,9 +264,17 @@ fi
 # env file (profile-specific, optional)
 # ---------------------------------------------------------------------------
 ENV_FILE="$PROFILE_DIR/.env"
+USER_ENV_FILE="$CONFIG_DIR/env"
 ENV_FILE_ARGS=()
+
+# Load user-level env file first (personal settings)
+if [[ -f "$USER_ENV_FILE" ]]; then
+  ENV_FILE_ARGS+=(--env-file "$USER_ENV_FILE")
+fi
+
+# Load profile-level env file second (can override user settings)
 if [[ -f "$ENV_FILE" ]]; then
-  ENV_FILE_ARGS=(--env-file "$ENV_FILE")
+  ENV_FILE_ARGS+=(--env-file "$ENV_FILE")
 fi
 
 # ---------------------------------------------------------------------------

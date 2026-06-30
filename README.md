@@ -89,6 +89,63 @@ ssh claude-anotherproject
 container-dev list
 ```
 
+## Environment Variables
+
+Environment variables can be passed to containers at three levels:
+
+### 1. User-Level (Global)
+
+**Location:** `~/.config/container-dev/env`
+
+Create this file to pass environment variables to **all containers** across all profiles:
+
+```bash
+# ~/.config/container-dev/env
+GITHUB_TOKEN=ghp_your_token_here
+JIRA_TOKEN=your_jira_token
+JIRA_EMAIL=you@company.com
+OPENAI_API_KEY=sk-your-key
+```
+
+These variables are available in every container you start, regardless of profile or workspace.
+
+**Security Note:** This file stays on your machine and is never committed to git.
+
+### 2. Profile-Level
+
+**Location:** `profiles/<profile>/.env`
+
+Create a `.env` file in a profile directory for variables specific to that profile:
+
+```bash
+# profiles/claude/.env
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+EDITOR=vim
+```
+
+These are only loaded when starting that specific profile.
+
+**Note:** Profile `.env` files can be committed to git for shared defaults, but avoid committing secrets.
+
+### 3. One-Time Override
+
+Pass environment variables for a single container start:
+
+```bash
+# Set a variable just for this container
+SPECIAL_TOKEN=secret123 container-dev start claude --persistent
+
+# Multiple variables
+DEBUG=1 LOG_LEVEL=verbose container-dev start opencode
+```
+
+### Loading Order
+
+Variables are loaded in this order (later overrides earlier):
+1. User-level env file (`~/.config/container-dev/env`)
+2. Profile-level env file (`profiles/<profile>/.env`)
+3. One-time overrides (command-line)
+
 ## Authentication (Claude-based profiles)
 
 Authentication is **machine-level**: configure once per machine, and `container-dev` auto-detects it.
@@ -107,8 +164,15 @@ The unified `claude` profile detects the gcloud ADC file and uses Vertex AI auto
 
 ### API Key (for Claude Pro users)
 
-Create `profiles/claude/.env`:
+Set your API key in the user-level env file:
 ```bash
+# ~/.config/container-dev/env
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+```
+
+Or in the profile-level env file:
+```bash
+# profiles/claude/.env
 ANTHROPIC_API_KEY=sk-ant-your-key-here
 ```
 
