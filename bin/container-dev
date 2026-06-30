@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Container-dev main command wrapper
+# Dispatches to subcommands in bin/
+
+# Resolve symlink to find actual script location
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_PATH" ]; do
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+  SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+  [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+usage() {
+  cat <<EOF
+container-dev - Manage containerized development environments
+
+Usage: container-dev <command> [args]
+
+Commands:
+  start <profile> [--persistent]  Start a container for current workspace
+  stop <container-name>           Stop and remove a container
+  list                            List all containers
+  persist                         Convert transient container to persistent
+
+Profiles:
+  claude           Claude Code (auth auto-detected)
+  opencode         Opencode with Claude backend
+  opencode-local   Opencode with local llama.cpp
+  pi               Pi with Claude backend
+  pi-local         Pi with local llama.cpp
+
+Examples:
+  # Start transient container
+  cd ~/my-project
+  container-dev start claude
+  ssh claude-transient
+
+  # Start persistent container
+  cd ~/important-work
+  container-dev start claude --persistent
+  ssh claude-importantwork
+
+  # List all containers
+  container-dev list
+
+  # Stop a container
+  container-dev stop claude-transient
+
+For more information, see: https://github.com/your-repo/container-dev
+EOF
+}
+
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 0
+fi
+
+COMMAND="$1"
+shift
+
+case "$COMMAND" in
+  start|up)
+    exec "$SCRIPT_DIR/start.sh" "$@"
+    ;;
+  stop|down)
+    exec "$SCRIPT_DIR/stop.sh" "$@"
+    ;;
+  list|ls)
+    exec "$SCRIPT_DIR/list.sh" "$@"
+    ;;
+  persist)
+    exec "$SCRIPT_DIR/persist.sh" "$@"
+    ;;
+  help|--help|-h)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "Error: Unknown command '$COMMAND'"
+    echo ""
+    usage
+    exit 1
+    ;;
+esac

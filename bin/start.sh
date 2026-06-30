@@ -1,47 +1,65 @@
 #!/usr/bin/env bash
 #
-# start.sh — build (if needed) and launch a profile-based dev container
+# start.sh — launch a container-dev environment (transient or persistent)
 #
 # Usage:
-#   ./bin/start.sh <profile> <workspace>  [options]
-#   ./bin/start.sh claude-vertex ~/repos/myapp
-#   ./bin/start.sh claude-vertex ~/repos/myapp --size large
-#   ./bin/start.sh claude-vertex ~/repos/myapp --cpus 6 --mem 8g
+#   container-dev start <profile> [--persistent] [options]
 #
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# resolve project root (one level up from bin/)
+# paths and config
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-KEYS_DIR="$HOME/.config/container-dev/keys"
+CONFIG_DIR="$HOME/.config/container-dev"
+KEYS_DIR="$CONFIG_DIR/keys"
+STATE_FILE="$CONFIG_DIR/state"
+CONFIG_FILE="$CONFIG_DIR/config"
 
 # ---------------------------------------------------------------------------
-# per-profile port map
+# per-profile base port map
 # ---------------------------------------------------------------------------
 profile_port() {
   case "$1" in
-    claude-vertex)  echo 2222 ;;
-    claude-pro-api) echo 2223 ;;
-    claude-pro-web) echo 2224 ;;
-    *)              echo 2225 ;;
+    claude)          echo 2222 ;;
+    opencode)        echo 2230 ;;
+    opencode-local)  echo 2231 ;;
+    pi)              echo 2240 ;;
+    pi-local)        echo 2241 ;;
+    # Legacy profiles (deprecated)
+    claude-vertex)   echo 2222 ;;
+    claude-pro-api)  echo 2223 ;;
+    claude-pro-web)  echo 2224 ;;
+    *)               echo 2299 ;;
   esac
 }
 
 # ---------------------------------------------------------------------------
-# size presets  (8-CPU / 16GB host)
+# detect Claude authentication method
 # ---------------------------------------------------------------------------
-apply_size() {
-  case "$1" in
-    small)  CPUS=2; MEM="2g" ;;
-    medium) CPUS=4; MEM="4g" ;;
-    large)  CPUS=6; MEM="8g" ;;
-    *)
-      echo "ERROR: unknown size '$1' (small|medium|large)" >&2
-      exit 1
-      ;;
-  esac
+detect_claude_auth() {
+  # Check for override in config
+  if [[ -f "$CONFIG_FILE" ]]; then
+    source "$CONFIG_FILE"
+    if [[ -n "${FORCE_CLAUDE_AUTH:-}" ]]; then
+      echo "$FORCE_CLAUDE_AUTH"
+      return
+    fi
+    if [[ -n "${CLAUDE_AUTH_TYPE:-}" ]]; then
+      echo "$CLAUDE_AUTH_TYPE"
+      return
+    fi
+  fi
+
+  # Auto-detect
+  if [[ -f "$HOME/.config/gcloud/application_default_credentials.json" ]]; then
+    echo "vertex"
+  elif [[ -n "${ANTHROPIC_API_KEY:-}" ]] || grep -q "ANTHROPIC_API_KEY" "${PROFILE_DIR}/.env" 2>/dev/null; then
+    echo "api"
+  else
+    echo "web"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -49,18 +67,33 @@ apply_size() {
 # ---------------------------------------------------------------------------
 usage() {
   cat <<'EOF'
-Usage: start.sh <profile> <workspace> [options]
+Usage: container-dev start <profile> [--persistent] [options]
 
 Arguments:
-  profile     Profile name (directory under profiles/)
-  workspace   Path to the host directory to mount as /workspace
+  profile     Profile name: claude, opencode, opencode-local, pi, pi-local
+
+Flags:
+  --persistent         Create dedicated container for this workspace (never auto-replaced)
+                       Default: transient (auto-replaced when switching workspaces)
 
 Options:
   --size <small|medium|large>   Resource preset (default: medium)
   --cpus <n>                    CPU cores (overrides --size)
   --mem  <size>                 Memory limit, e.g. 4g (overrides --size)
-  --port <port>                 Host SSH port (default: per-profile)
+  --port <port>                 Host SSH port (default: auto-assigned)
   -h, --help                    Show this help
+
+Examples:
+  # Transient container (auto-replaced on workspace change)
+  cd ~/experiments/test
+  container-dev start claude
+  ssh claude-transient
+
+  # Persistent container (dedicated, never auto-replaced)
+  cd ~/work/important-project
+  container-dev start claude --persistent
+  ssh claude-importantproject
+
 EOF
   exit 0
 }
@@ -69,7 +102,7 @@ EOF
 # parse arguments
 # ---------------------------------------------------------------------------
 PROFILE=""
-WORKSPACE=""
+PERSISTENT=false
 SIZE=""
 CPUS=""
 MEM=""
@@ -77,68 +110,155 @@ SSH_PORT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -h|--help)  usage ;;
-    --size)     SIZE="$2";     shift 2 ;;
-    --cpus)     CPUS="$2";     shift 2 ;;
-    --mem)      MEM="$2";      shift 2 ;;
-    --port)     SSH_PORT="$2"; shift 2 ;;
+    -h|--help)        usage ;;
+    --persistent|-p)  PERSISTENT=true; shift ;;
+    --size)           SIZE="$2"; shift 2 ;;
+    --cpus)           CPUS="$2"; shift 2 ;;
+    --mem)            MEM="$2"; shift 2 ;;
+    --port)           SSH_PORT="$2"; shift 2 ;;
     -*)
       echo "ERROR: unknown option '$1'" >&2
       usage
       ;;
     *)
-      if   [[ -z "$PROFILE" ]];   then PROFILE="$1"
-      elif [[ -z "$WORKSPACE" ]]; then WORKSPACE="$1"
-      else echo "ERROR: unexpected argument '$1'" >&2; usage
+      if [[ -z "$PROFILE" ]]; then
+        PROFILE="$1"
+      else
+        echo "ERROR: unexpected argument '$1'" >&2
+        usage
       fi
       shift
       ;;
   esac
 done
 
-if [[ -z "$PROFILE" || -z "$WORKSPACE" ]]; then
-  echo "ERROR: profile and workspace are required" >&2
+if [[ -z "$PROFILE" ]]; then
+  echo "ERROR: profile is required" >&2
   usage
 fi
 
 # ---------------------------------------------------------------------------
-# resolve paths and defaults
+# workspace detection
+# ---------------------------------------------------------------------------
+WORKSPACE="$(pwd)"
+WORKSPACE_SLUG=$(basename "$WORKSPACE" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
+
+# ---------------------------------------------------------------------------
+# container naming
+# ---------------------------------------------------------------------------
+if [[ "$PERSISTENT" == true ]]; then
+  CONTAINER_NAME="${PROFILE}-${WORKSPACE_SLUG}"
+  CONTAINER_TYPE="persistent"
+else
+  CONTAINER_NAME="${PROFILE}-transient"
+  CONTAINER_TYPE="transient"
+fi
+
+IMAGE_NAME="${PROFILE}-img"
+
+# ---------------------------------------------------------------------------
+# validate profile
 # ---------------------------------------------------------------------------
 PROFILE_DIR="$PROJECT_DIR/profiles/$PROFILE"
 if [[ ! -d "$PROFILE_DIR" ]]; then
   echo "ERROR: profile directory not found: $PROFILE_DIR" >&2
+  echo "" >&2
+  echo "Available profiles:" >&2
+  ls -1 "$PROJECT_DIR/profiles" | grep -v '^_' | sed 's/^/  /' >&2
   exit 1
 fi
 
-WORKSPACE="$(cd "$WORKSPACE" 2>/dev/null && pwd || echo "$WORKSPACE")"
-if [[ ! -d "$WORKSPACE" ]]; then
-  echo "ERROR: workspace directory not found: $WORKSPACE" >&2
-  exit 1
+# ---------------------------------------------------------------------------
+# check for existing container
+# ---------------------------------------------------------------------------
+if container list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$CONTAINER_NAME"; then
+  # Container already running - check if workspace matches (for transient)
+  if [[ "$PERSISTENT" == false ]]; then
+    EXISTING_WORKSPACE=$(grep "^${CONTAINER_NAME}|" "$STATE_FILE" 2>/dev/null | cut -d'|' -f2 || echo "")
+    if [[ "$EXISTING_WORKSPACE" == "$WORKSPACE" ]]; then
+      echo "✓ Container '$CONTAINER_NAME' already running with this workspace"
+      echo ""
+      echo "  SSH:    ssh $CONTAINER_NAME"
+      echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
+      exit 0
+    else
+      echo "Switching transient workspace:"
+      echo "  From: $EXISTING_WORKSPACE"
+      echo "  To:   $WORKSPACE"
+      echo ""
+      echo "Stopping old transient container..."
+      container stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+      container rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
+      sed -i.bak "/^${CONTAINER_NAME}|/d" "$STATE_FILE" 2>/dev/null || true
+    fi
+  else
+    echo "✓ Persistent container '$CONTAINER_NAME' already running"
+    echo ""
+    echo "  SSH:    ssh $CONTAINER_NAME"
+    echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
+    exit 0
+  fi
 fi
 
-CONTAINER_NAME="${PROFILE}-container"
-IMAGE_NAME="${PROFILE}-img"
-SSH_PORT="${SSH_PORT:-$(profile_port "$PROFILE")}"
+# ---------------------------------------------------------------------------
+# detect auth for Claude-based profiles
+# ---------------------------------------------------------------------------
+CLAUDE_AUTH_TYPE="none"
+if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
+  CLAUDE_AUTH_TYPE=$(detect_claude_auth)
 
-# apply size preset, then let explicit --cpus/--mem override
+  # Save detected auth to config file
+  mkdir -p "$CONFIG_DIR"
+  if ! grep -q "CLAUDE_AUTH_TYPE=" "$CONFIG_FILE" 2>/dev/null; then
+    echo "CLAUDE_AUTH_TYPE=$CLAUDE_AUTH_TYPE" >> "$CONFIG_FILE"
+    echo "Detected Claude auth: $CLAUDE_AUTH_TYPE (saved to config)"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# resource limits
+# ---------------------------------------------------------------------------
 if [[ -n "$SIZE" ]]; then
-  apply_size "$SIZE"
+  case "$SIZE" in
+    small)  CPUS=2; MEM="2g" ;;
+    medium) CPUS=4; MEM="4g" ;;
+    large)  CPUS=6; MEM="8g" ;;
+    *)
+      echo "ERROR: unknown size '$SIZE' (small|medium|large)" >&2
+      exit 1
+      ;;
+  esac
 fi
 CPUS="${CPUS:-4}"
 MEM="${MEM:-4g}"
 
 # ---------------------------------------------------------------------------
-# find Dockerfile
+# port assignment
 # ---------------------------------------------------------------------------
-if   [[ -f "$PROFILE_DIR/Dockerfile" ]];        then DOCKERFILE="$PROFILE_DIR/Dockerfile"
-elif [[ -f "$PROFILE_DIR/Containerfile" ]];      then DOCKERFILE="$PROFILE_DIR/Containerfile"
-else
-  echo "ERROR: no Dockerfile found in $PROFILE_DIR" >&2
-  exit 1
+if [[ -z "$SSH_PORT" ]]; then
+  BASE_PORT=$(profile_port "$PROFILE")
+  SSH_PORT=$BASE_PORT
+  # Find next available port if base is taken
+  while lsof -i ":$SSH_PORT" >/dev/null 2>&1; do
+    ((SSH_PORT++))
+  done
+  if [[ "$SSH_PORT" != "$BASE_PORT" ]]; then
+    echo "Note: Port $BASE_PORT in use, using $SSH_PORT instead"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
-# env file (optional — used if present, skipped if absent)
+# SSH keypair
+# ---------------------------------------------------------------------------
+mkdir -p "$KEYS_DIR"
+KEY_FILE="$KEYS_DIR/container_ed25519"
+if [[ ! -f "$KEY_FILE" ]]; then
+  echo ">> Generating SSH keypair..."
+  ssh-keygen -t ed25519 -f "$KEY_FILE" -N "" -C "container-dev"
+fi
+
+# ---------------------------------------------------------------------------
+# env file (profile-specific, optional)
 # ---------------------------------------------------------------------------
 ENV_FILE="$PROFILE_DIR/.env"
 ENV_FILE_ARGS=()
@@ -147,57 +267,79 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# SSH keypair (dedicated — never uses host personal keys)
+# volume mounts
 # ---------------------------------------------------------------------------
-mkdir -p "$KEYS_DIR"
-KEY_FILE="$KEYS_DIR/container_ed25519"
-if [[ ! -f "$KEY_FILE" ]]; then
-  echo ">> Generating dedicated SSH keypair for container access..."
-  ssh-keygen -t ed25519 -f "$KEY_FILE" -N "" -C "container-dev"
+MOUNT_ARGS=(
+  --volume "${WORKSPACE}:/workspace"
+  --volume "${KEY_FILE}.pub:/tmp/pubkey/authorized_keys:ro"
+)
+
+# Auth-specific mounts (Claude-based profiles)
+if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
+  case "$CLAUDE_AUTH_TYPE" in
+    vertex)
+      ADC_PATH="$HOME/.config/gcloud/application_default_credentials.json"
+      if [[ -f "$ADC_PATH" ]]; then
+        MOUNT_ARGS+=(--volume "${ADC_PATH}:/root/.config/gcloud/application_default_credentials.json:ro")
+      else
+        echo "WARN: Vertex auth detected but gcloud ADC not found" >&2
+        echo "  Run 'gcloud auth application-default login' to set up credentials" >&2
+      fi
+      ;;
+    web)
+      AUTH_DIR="$CONFIG_DIR/auth/claude"
+      mkdir -p "$AUTH_DIR"
+      MOUNT_ARGS+=(--volume "${AUTH_DIR}:/root/.claude")
+      ;;
+  esac
+fi
+
+# Model mounts (local profiles)
+if [[ "$PROFILE" =~ -local$ ]]; then
+  MODEL_DIR="$CONFIG_DIR/models"
+  mkdir -p "$MODEL_DIR"
+  MOUNT_ARGS+=(--volume "${MODEL_DIR}:/root/.cache/models:ro")
 fi
 
 # ---------------------------------------------------------------------------
-# persistent ~/.claude auth volume (only for browser-auth profiles)
+# environment variables passed to container
 # ---------------------------------------------------------------------------
-AUTH_MOUNT_ARGS=()
-if [[ "$PROFILE" == "claude-pro-web" ]]; then
-  AUTH_DIR="$HOME/.config/container-dev/auth/${PROFILE}"
-  mkdir -p "$AUTH_DIR"
-  AUTH_MOUNT_ARGS=(--volume "${AUTH_DIR}:/root/.claude")
+CONTAINER_ENV=(
+  -e "WORKSPACE_PATH=$WORKSPACE"
+  -e "CONTAINER_NAME=$CONTAINER_NAME"
+  -e "CLAUDE_AUTH_TYPE=$CLAUDE_AUTH_TYPE"
+)
+
+# Auth-specific env vars
+if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
+  case "$CLAUDE_AUTH_TYPE" in
+    vertex)
+      CONTAINER_ENV+=(-e "ANTHROPIC_VERTEX_PROJECT_ID=${ANTHROPIC_VERTEX_PROJECT_ID:-}")
+      CONTAINER_ENV+=(-e "CLOUD_ML_REGION=${CLOUD_ML_REGION:-us-central1}")
+      ;;
+    api)
+      CONTAINER_ENV+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}")
+      ;;
+  esac
 fi
 
 # ---------------------------------------------------------------------------
-# gcloud ADC credentials (only for Vertex AI profiles)
+# find Dockerfile
 # ---------------------------------------------------------------------------
-ADC_MOUNT_ARGS=()
-if grep -q 'CLAUDE_CODE_USE_VERTEX' "$ENV_FILE" 2>/dev/null; then
-  ADC_FILE="$HOME/.config/gcloud/application_default_credentials.json"
-  if [[ -f "$ADC_FILE" ]]; then
-    ADC_MOUNT_ARGS=(--volume "${ADC_FILE}:/root/.config/gcloud/application_default_credentials.json:ro")
-  else
-    echo "WARN: gcloud ADC not found at $ADC_FILE" >&2
-    echo "  Run 'gcloud auth application-default login' on the host to set up credentials." >&2
-  fi
-fi
-
-# ---------------------------------------------------------------------------
-# check if container is already running
-# ---------------------------------------------------------------------------
-if container list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$CONTAINER_NAME"; then
-  echo ">> Container '$CONTAINER_NAME' is already running."
-  echo ""
-  echo "  SSH:    ssh ${PROFILE}-host"
-  echo "  VSCode: code --remote ssh-remote+${PROFILE}-host /workspace"
-  echo ""
-  echo "  Stop:   ./bin/stop.sh $PROFILE"
-  exit 0
+if [[ -f "$PROFILE_DIR/Dockerfile" ]]; then
+  DOCKERFILE="$PROFILE_DIR/Dockerfile"
+elif [[ -f "$PROFILE_DIR/Containerfile" ]]; then
+  DOCKERFILE="$PROFILE_DIR/Containerfile"
+else
+  echo "ERROR: no Dockerfile found in $PROFILE_DIR" >&2
+  exit 1
 fi
 
 # ---------------------------------------------------------------------------
 # build image if needed
 # ---------------------------------------------------------------------------
 if container image list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$IMAGE_NAME"; then
-  echo ">> Image '$IMAGE_NAME' already exists, skipping build."
+  echo ">> Image '$IMAGE_NAME' exists"
 else
   echo ">> Building $IMAGE_NAME from $DOCKERFILE ..."
   container build -t "$IMAGE_NAME" --file "$DOCKERFILE" "$PROFILE_DIR"
@@ -206,49 +348,71 @@ fi
 # ---------------------------------------------------------------------------
 # launch container
 # ---------------------------------------------------------------------------
-echo ">> Starting $CONTAINER_NAME (cpus=$CPUS mem=$MEM port=$SSH_PORT)"
-echo ">> Workspace: $WORKSPACE -> /workspace"
+echo ">> Starting $CONTAINER_NAME ($CONTAINER_TYPE)"
+echo "   Workspace: $WORKSPACE"
+echo "   Profile:   $PROFILE"
+echo "   Resources: cpus=$CPUS mem=$MEM"
+echo "   SSH port:  $SSH_PORT"
+if [[ "$CLAUDE_AUTH_TYPE" != "none" ]]; then
+  echo "   Auth:      Claude ($CLAUDE_AUTH_TYPE)"
+fi
+echo ""
 
 container run --detach \
   --name "$CONTAINER_NAME" \
   --cpus "$CPUS" \
   --memory "$MEM" \
   --publish "${SSH_PORT}:22" \
-  --volume "${WORKSPACE}:/workspace" \
-  --volume "${KEY_FILE}.pub:/tmp/pubkey/authorized_keys:ro" \
-  ${AUTH_MOUNT_ARGS[@]+"${AUTH_MOUNT_ARGS[@]}"} \
-  ${ADC_MOUNT_ARGS[@]+"${ADC_MOUNT_ARGS[@]}"} \
+  ${MOUNT_ARGS[@]+"${MOUNT_ARGS[@]}"} \
+  ${CONTAINER_ENV[@]+"${CONTAINER_ENV[@]}"} \
   ${ENV_FILE_ARGS[@]+"${ENV_FILE_ARGS[@]}"} \
   "$IMAGE_NAME"
 
 # ---------------------------------------------------------------------------
-# auto-configure ~/.ssh/config
+# record state
 # ---------------------------------------------------------------------------
-SSH_HOST="${PROFILE}-host"
+mkdir -p "$CONFIG_DIR"
+sed -i.bak "/^${CONTAINER_NAME}|/d" "$STATE_FILE" 2>/dev/null || true
+echo "${CONTAINER_NAME}|${WORKSPACE}|${SSH_PORT}|${CONTAINER_TYPE}" >> "$STATE_FILE"
+
+# ---------------------------------------------------------------------------
+# update SSH config
+# ---------------------------------------------------------------------------
 SSH_CONFIG="$HOME/.ssh/config"
 mkdir -p "$HOME/.ssh"
 
-if ! grep -q "^Host ${SSH_HOST}$" "$SSH_CONFIG" 2>/dev/null; then
-  echo ">> Adding '$SSH_HOST' to $SSH_CONFIG"
-  cat >> "$SSH_CONFIG" <<EOF
+# Remove existing entry if present
+if grep -q "^Host ${CONTAINER_NAME}$" "$SSH_CONFIG" 2>/dev/null; then
+  # Remove from "Host" line to next empty line
+  sed -i.bak "/^Host ${CONTAINER_NAME}$/,/^$/d" "$SSH_CONFIG"
+fi
 
-Host ${SSH_HOST}
-    HostName localhost
-    Port ${SSH_PORT}
+# Add new entry
+cat >> "$SSH_CONFIG" <<EOF
+
+Host $CONTAINER_NAME
+    HostName 127.0.0.1
+    Port $SSH_PORT
     User root
-    IdentityFile ${KEY_FILE}
+    IdentityFile $KEY_FILE
     StrictHostKeyChecking no
     UserKnownHostsFile /dev/null
 EOF
-fi
 
 # ---------------------------------------------------------------------------
 # done
 # ---------------------------------------------------------------------------
+echo "✓ Container ready"
 echo ""
-echo ">> Container '$CONTAINER_NAME' is running."
+echo "  SSH:    ssh $CONTAINER_NAME"
+echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
 echo ""
-echo "  SSH:    ssh ${SSH_HOST}"
-echo "  VSCode: code --remote ssh-remote+${SSH_HOST} /workspace"
+if [[ "$PERSISTENT" == false ]]; then
+  echo "  Type:   Transient (will auto-replace when switching workspaces)"
+  echo "  Persist: container-dev persist  (convert to persistent)"
+else
+  echo "  Type:   Persistent (dedicated, never auto-replaced)"
+fi
 echo ""
-echo "  Stop:   ./bin/stop.sh $PROFILE"
+echo "  List:   container-dev list"
+echo "  Stop:   container-dev stop $CONTAINER_NAME"

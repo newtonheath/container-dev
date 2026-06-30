@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Copy SSH key
+if [[ -f /tmp/pubkey/authorized_keys ]]; then
+  cp /tmp/pubkey/authorized_keys /root/.ssh/authorized_keys
+  chmod 600 /root/.ssh/authorized_keys
+fi
+
+# Get workspace info from environment (passed by start.sh)
+WORKSPACE_PATH="${WORKSPACE_PATH:-/workspace}"
+WORKSPACE_NAME=$(basename "$WORKSPACE_PATH")
+CONTAINER_NAME="${CONTAINER_NAME:-unknown}"
+CLAUDE_AUTH_TYPE="${CLAUDE_AUTH_TYPE:-unknown}"
+
+# Write MOTD
+cat > /etc/motd <<MOTD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Container: ${CONTAINER_NAME}
+  Profile:   claude
+  Workspace: ${WORKSPACE_PATH}
+  Tool:      Claude Code
+  Backend:   Claude API (${CLAUDE_AUTH_TYPE})
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MOTD
+
+# Configure PS1 to show workspace
+echo "export PS1='[\u@${WORKSPACE_NAME}:\w]\\$ '" >> /root/.bashrc
+echo 'cd /workspace' >> /root/.bashrc
+
+# Configure Claude Code settings based on auth type
+mkdir -p /root/.claude
+case "${CLAUDE_AUTH_TYPE}" in
+  vertex)
+    cat > /root/.claude/settings.json <<SETTINGS
+{
+  "theme": "dark",
+  "env": {
+    "CLAUDE_CODE_USE_VERTEX": "1",
+    "ANTHROPIC_VERTEX_PROJECT_ID": "${ANTHROPIC_VERTEX_PROJECT_ID:-}",
+    "CLOUD_ML_REGION": "${CLOUD_ML_REGION:-us-central1}"
+  }
+}
+SETTINGS
+    ;;
+  api)
+    cat > /root/.claude/settings.json <<SETTINGS
+{
+  "theme": "dark",
+  "model": "claude-sonnet-4-6",
+  "env": {
+    "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY:-}"
+  }
+}
+SETTINGS
+    ;;
+  web)
+    # OAuth - settings.json created by Claude Code after browser auth
+    # Just ensure directory exists; persistent mount handles token
+    cat > /root/.claude/settings.json <<SETTINGS
+{
+  "theme": "dark",
+  "model": "claude-sonnet-4-6"
+}
+SETTINGS
+    ;;
+  *)
+    # Fallback - let Claude Code configure itself
+    cat > /root/.claude/settings.json <<SETTINGS
+{
+  "theme": "dark",
+  "model": "claude-sonnet-4-6"
+}
+SETTINGS
+    ;;
+esac
+
+exec /usr/sbin/sshd -D

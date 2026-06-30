@@ -1,245 +1,326 @@
 # container-dev
 
-Containerized AI development environments for macOS. Run Claude Code (or other AI agents) inside isolated Fedora containers while editing code in VS Code on the host via Remote-SSH.
+Containerized development environments for macOS using Apple's `container` CLI. Each container is an isolated Fedora 44 environment with SSH access and your repo mounted at `/workspace`.
 
-## How It Works
+## Features
 
+- **Multiple AI coding tools**: Claude Code, Opencode, Pi (with Claude or local llama.cpp backends)
+- **Transient by default**: Drop-in/drop-out workspace switching with auto-cleanup
+- **Persistent opt-in**: Long-lived containers for important projects
+- **Machine-level auth**: Configure Claude authentication once per machine
+- **Simple command interface**: `container-dev start/stop/list/persist`
+
+## Installation
+
+```bash
+cd ~/path/to/container-dev
+./install.sh
 ```
-┌─── Host (macOS) ──────────────┐      ┌─── Container (Fedora 44) ────┐
-│                               │      │                              │
-│  VS Code / SSH ───────────────┼─────►│  Claude Code (TUI or IDE)    │
-│                               │      │                              │
-│  ~/repos/my-project ──────────┼─────►│  /workspace (bind mount)     │
-│                               │      │                              │
-│  Profile (.env, auth) ────────┼─────►│  Auth + config (per profile) │
-│                               │      │                              │
-└───────────────────────────────┘      └──────────────────────────────┘
-```
 
-- **Profiles** define how the container authenticates (Vertex AI, API key, or browser OAuth) — each has its own Dockerfile, env config, and SSH port
-- Code lives on the host and is bind-mounted into the container
-- SSH keypair is auto-generated (your personal keys are never used)
-- Resource limits (CPU, memory) are set per launch
-
-## Prerequisites
-
-- macOS with Apple's `container` CLI (`container --version`)
-- VS Code with the [Remote - SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) extension
-- For `claude-vertex`: `gcloud` CLI installed and authenticated (`gcloud auth application-default login`)
-- For `claude-pro-api`: an Anthropic API key
+This creates a symlink at `~/.local/bin/container-dev`. Make sure `~/.local/bin` is in your PATH.
 
 ## Quick Start
 
 ```bash
-# 1. Create your env file from the template
-cp profiles/claude-vertex/env.example profiles/claude-vertex/.env
-# Edit .env with your GCP project ID and region
+# Start a transient container (auto-replaced when switching workspaces)
+cd ~/my-project
+container-dev start claude
+ssh claude-transient
 
-# 2. Launch a container pointing at your repo
-./bin/start.sh claude-vertex ~/repos/my-project
+# Work in another project (auto-replaces the transient container)
+cd ~/another-project
+container-dev start claude
+ssh claude-transient  # Same SSH hostname, different workspace
 
-# 3. Connect
-ssh claude-vertex-host
-# Or from VS Code: Remote-SSH → connect to "claude-vertex-host"
-
-# 4. Stop when done
-./bin/stop.sh claude-vertex
-```
-
-## Usage
-
-```
-./bin/start.sh <profile> <workspace> [options]
-```
-
-| Argument    | Description                              |
-|-------------|------------------------------------------|
-| `profile`   | Profile name (directory under `profiles/`) |
-| `workspace` | Host directory to mount as `/workspace`  |
-
-| Option                        | Description                    |
-|-------------------------------|--------------------------------|
-| `--size small\|medium\|large` | Resource preset (default: medium) |
-| `--cpus <n>`                  | CPU cores (overrides --size)   |
-| `--mem <size>`                | Memory limit, e.g. 8g (overrides --size) |
-| `--port <port>`               | Host SSH port (overrides per-profile default) |
-
-### Size Presets
-
-| Preset | CPUs | Memory | Use case                        |
-|--------|------|--------|---------------------------------|
-| small  | 2    | 2g     | Light editing, small repos      |
-| medium | 4    | 4g     | Default — typical dev work      |
-| large  | 6    | 8g     | Heavy agent workloads           |
-
-### Examples
-
-```bash
-# Default (medium) resources
-./bin/start.sh claude-vertex ~/repos/my-project
-
-# Large preset for heavy workloads
-./bin/start.sh claude-vertex ~/repos/my-project --size large
-
-# Custom resources
-./bin/start.sh claude-vertex ~/repos/my-project --cpus 6 --mem 8g
+# Create a persistent container for an important project
+cd ~/work/critical-project
+container-dev start claude --persistent
+ssh claude-criticalproject  # Dedicated container, never auto-replaced
 ```
 
 ## Profiles
 
-Three profiles are available, each using a different authentication method:
+| Profile | Tool | Backend | Use Case |
+|---------|------|---------|----------|
+| `claude` | Claude Code | Claude API | Main AI coding assistant (auth auto-detected) |
+| `opencode` | Opencode | Claude API | Alternative tool with Claude backend |
+| `opencode-local` | Opencode | llama.cpp | Offline/privacy-focused with local model |
+| `pi` | Pi | Claude API | Pi coding assistant with Claude |
+| `pi-local` | Pi | llama.cpp | Pi with local model |
 
-| Profile | Auth method | SSH port |
-|---|---|---|
-| `claude-vertex` | Google Cloud Vertex AI (gcloud ADC) | 2222 |
-| `claude-pro-api` | Anthropic API key | 2223 |
-| `claude-pro-web` | Browser OAuth (Claude.ai subscription) | 2224 |
+## Container Types
 
-### claude-vertex (Google Cloud Vertex AI)
+### Transient (Default)
 
-Authenticates via gcloud Application Default Credentials mounted read-only from the host — no API key required.
+**Best for**: Quick experiments, switching between many repos
 
-**Setup:**
-1. Authenticate on the host: `gcloud auth application-default login`
-2. Copy and edit the env file:
-   ```bash
-   cp profiles/claude-vertex/env.example profiles/claude-vertex/.env
-   ```
-3. Fill in your GCP project ID and region in `.env`
-
-### claude-pro-api (Anthropic API key)
-
-Authenticates using an Anthropic API key injected via `.env`. No browser login or gcloud required.
-
-**Setup:**
-1. Copy and edit the env file:
-   ```bash
-   cp profiles/claude-pro-api/env.example profiles/claude-pro-api/.env
-   ```
-2. Add your `ANTHROPIC_API_KEY` to `.env`
-
-### claude-pro-web (Browser OAuth)
-
-Authenticates via Claude.ai browser login — no API key needed. You authenticate once interactively; the OAuth token is stored in `.auth/claude-pro-web/` on the host and mounted back into the container on every subsequent start, so you are not prompted again until the token expires.
-
-**Setup:** none — no `.env` file required.
-
-**First run:**
-```bash
-./bin/start.sh claude-pro-web ~/repos/my-project
-ssh claude-pro-web-host
-claude   # prompts for browser auth on first use only
-```
-
-**Token persistence:** the credential file lives at `.auth/claude-pro-web/` on the host (gitignored). Deleting and recreating the container does not invalidate it — only token expiry (set by Anthropic) will require re-authentication.
-
-### Naming Convention
-
-For a profile named `claude-vertex`:
-
-| Resource       | Name                    |
-|----------------|-------------------------|
-| Image          | `claude-vertex-img`       |
-| Container      | `claude-vertex-container` |
-| SSH host       | `claude-vertex-host`      |
-
-## Connecting VS Code
-
-The `start.sh` script automatically adds an SSH host entry to `~/.ssh/config`, so VS Code can connect with no manual configuration.
-
-1. **Open VS Code** on your Mac
-2. Open the Command Palette (`Cmd+Shift+P`)
-3. Type **"Remote-SSH: Connect to Host..."** and select it
-4. Choose **`claude-vertex-host`** (or `<profile>-host` for other profiles) from the list
-5. VS Code will open a new window connected to the container
-6. Open the `/workspace` folder — this is your bind-mounted repo
-
-Once connected, the VS Code terminal runs inside the container. Run `claude` there to start the AI agent — it will use Vertex AI automatically with no setup prompts.
-
-To open directly from the command line:
-```bash
-code --remote ssh-remote+claude-vertex-host /workspace
-```
-
-## Creating a New Profile
-
-To add support for a different AI tool or auth method:
-
-1. Create a new directory under `profiles/`:
-   ```
-   profiles/my-profile/
-   ├── Dockerfile       # Base image, tools, SSH server setup
-   ├── sshd_config      # Can copy from an existing profile
-   ├── entrypoint.sh    # Copies SSH key into place, starts sshd
-   └── env.example      # Template for required env vars
-   ```
-
-2. The Dockerfile should:
-   - Install `openssh-server` and your AI tool
-   - Run `ssh-keygen -A` to generate SSH host keys
-   - Run `passwd -d root` to unlock the root account for SSH
-   - Copy `sshd_config` and `entrypoint.sh` into the image
-   - End with `CMD ["/usr/local/bin/entrypoint.sh"]`
-
-3. Add a port mapping in `bin/start.sh` in the `profile_port()` function:
-   ```bash
-   profile_port() {
-     case "$1" in
-       claude-vertex)  echo 2222 ;;
-       claude-pro-api) echo 2223 ;;
-       claude-pro-web) echo 2224 ;;
-       my-profile)     echo 2225 ;;
-       *)              echo 2226 ;;
-     esac
-   }
-   ```
-
-4. Create your `.env` from the template and launch:
-   ```bash
-   cp profiles/my-profile/env.example profiles/my-profile/.env
-   ./bin/start.sh my-profile ~/repos/my-project
-   ```
-
-## Project Structure
-
-```
-container-dev/
-├── bin/
-│   ├── start.sh              # Build and launch a container
-│   └── stop.sh               # Stop and remove a container
-├── profiles/
-│   ├── claude-vertex/        # Vertex AI auth (gcloud ADC)
-│   ├── claude-pro-api/       # API key auth
-│   │   ├── Dockerfile
-│   │   ├── sshd_config
-│   │   ├── entrypoint.sh
-│   │   ├── env.example       # Committed template
-│   │   └── .env              # Your actual config (gitignored)
-│   └── claude-pro-web/       # Browser OAuth auth
-│       ├── Dockerfile
-│       ├── sshd_config
-│       └── entrypoint.sh     # No .env needed
-├── .auth/                    # Persisted browser OAuth tokens (gitignored)
-│   └── claude-pro-web/       # Mounted as /root/.claude in container
-├── .keys/                    # Auto-generated SSH keypair (gitignored)
-└── .gitignore
-```
-
-## Managing Images and Containers
+- **One per profile**: `claude-transient`, `opencode-transient`
+- **Auto-replaced**: When you switch workspaces, the old container is stopped and recreated
+- **SSH hostname**: `ssh claude-transient`
 
 ```bash
-# List running containers
-container list
+cd ~/experiments/test-1
+container-dev start claude
+ssh claude-transient
 
-# List built images
-container image list
-
-# Stop a specific profile's container
-./bin/stop.sh claude-vertex
-
-# Stop all dev containers
-./bin/stop.sh
-
-# Remove an image (forces rebuild on next start)
-container image rm claude-vertex-img:latest
+cd ~/experiments/test-2
+container-dev start claude  # Replaces test-1 container
+ssh claude-transient        # Same hostname, new workspace
 ```
+
+### Persistent (Opt-in with `--persistent`)
+
+**Best for**: Long-lived projects you return to frequently
+
+- **One per workspace**: `claude-importantproject`, `claude-clientwork`
+- **Never auto-replaced**: Dedicated container stays running until you explicitly stop it
+- **SSH hostname**: `ssh claude-importantproject`
+
+```bash
+cd ~/work/important-project
+container-dev start claude --persistent
+ssh claude-importantproject
+
+cd ~/work/another-project
+container-dev start claude --persistent
+ssh claude-anotherproject
+
+# Both containers stay running simultaneously
+container-dev list
+```
+
+## Authentication (Claude-based profiles)
+
+Authentication is **machine-level**: configure once per machine, and `container-dev` auto-detects it.
+
+### Vertex AI (for GCP users)
+
+```bash
+# On your work laptop with gcloud
+gcloud auth application-default login
+
+# Start container (auto-detects Vertex)
+container-dev start claude
+```
+
+The unified `claude` profile detects the gcloud ADC file and uses Vertex AI automatically.
+
+### API Key (for Claude Pro users)
+
+Create `profiles/claude/.env`:
+```bash
+ANTHROPIC_API_KEY=sk-ant-your-key-here
+```
+
+`container-dev start claude` will auto-detect the API key.
+
+### Browser OAuth (fallback)
+
+If no gcloud ADC or API key is found, Claude Code will use browser OAuth on first launch.
+
+**Override detection:**
+
+Edit `~/.config/container-dev/config`:
+```bash
+FORCE_CLAUDE_AUTH=vertex  # or: api, web
+```
+
+## Commands
+
+### `container-dev start <profile> [--persistent]`
+
+Start a container for the current workspace.
+
+**Options:**
+- `--persistent` / `-p` - Create dedicated container (never auto-replaced)
+- `--size small|medium|large` - Resource preset (default: medium)
+- `--cpus <n>` - CPU cores
+- `--mem <size>` - Memory limit (e.g., `4g`)
+
+**Examples:**
+```bash
+# Transient (default)
+container-dev start claude
+
+# Persistent
+container-dev start claude --persistent
+
+# With custom resources
+container-dev start opencode-local --size large
+container-dev start pi --cpus 6 --mem 8g
+```
+
+### `container-dev stop <container-name>`
+
+Stop and remove a container. Warns before stopping persistent containers.
+
+```bash
+container-dev stop claude-transient
+container-dev stop claude-importantproject
+```
+
+### `container-dev list`
+
+Show all running containers with their type (transient vs persistent), workspace, and SSH hostname.
+
+```bash
+$ container-dev list
+
+📦 Transient Containers (auto-replaced on workspace change)
+───────────────────────────────────────────────────────────
+  ssh claude-transient
+    Profile:   claude
+    Workspace: /Users/you/experiments/test
+    Port:      2222
+
+🔒 Persistent Containers (dedicated, never auto-replaced)
+───────────────────────────────────────────────────────────
+  ssh claude-bigproject
+    Profile:   claude
+    Workspace: /Users/you/work/bigproject
+    Port:      2223
+
+  ssh opencode-local-research
+    Profile:   opencode-local
+    Workspace: /Users/you/research/ml
+    Port:      2231
+```
+
+### `container-dev persist`
+
+Convert the current workspace's transient container to persistent.
+
+```bash
+cd ~/work/project
+container-dev start claude        # Transient
+# ...work for a while, decide to keep it...
+container-dev persist             # Now persistent
+```
+
+**Note:** Full implementation pending - currently guides manual recreation.
+
+## Local Models (for `*-local` profiles)
+
+Profiles ending in `-local` (e.g., `opencode-local`, `pi-local`) use llama.cpp for inference.
+
+### Model Storage
+
+Models are stored in `~/.config/container-dev/models/` and shared across all local profiles.
+
+### Download a Model
+
+```bash
+mkdir -p ~/.config/container-dev/models
+cd ~/.config/container-dev/models
+
+# Example: CodeLlama 7B (4.8 GB)
+wget https://huggingface.co/TheBloke/CodeLlama-7B-GGUF/resolve/main/codellama-7b.Q4_K_M.gguf
+
+# Example: DeepSeek Coder 6.7B (4.1 GB)
+wget https://huggingface.co/TheBloke/deepseek-coder-6.7b-instruct-GGUF/resolve/main/deepseek-coder-6.7b-instruct.Q4_K_M.gguf
+```
+
+### Configure Model
+
+Create `profiles/opencode-local/.env`:
+```bash
+LLAMA_MODEL_PATH=/root/.cache/models/codellama-7b.Q4_K_M.gguf
+LLAMA_CONTEXT_SIZE=8192
+LLAMA_THREADS=4
+```
+
+## Workspace Naming
+
+For persistent containers, the workspace directory name becomes part of the SSH hostname:
+
+```bash
+cd ~/work/important-project
+container-dev start claude --persistent
+# Creates: claude-importantproject
+# SSH: ssh claude-importantproject
+```
+
+**Tip:** Use clear, descriptive directory names for workspaces you plan to make persistent.
+
+## VS Code Integration
+
+```bash
+# Start container
+cd ~/my-project
+container-dev start claude --persistent
+
+# Connect VS Code
+code --remote ssh-remote+claude-myproject /workspace
+
+# Or use VS Code's "Remote-SSH: Connect to Host" command
+# and select "claude-myproject" from the list
+```
+
+**Safety:** Persistent containers stay connected even when you're working elsewhere. Forgotten VS Code windows can't accidentally reconnect to the wrong workspace.
+
+## Migration from Old Profiles
+
+If you were using `claude-vertex`, `claude-pro-api`, or `claude-pro-web`:
+
+1. Use the unified `claude` profile instead
+2. Auth is auto-detected (or override in `~/.config/container-dev/config`)
+3. Old profiles still work (deprecated) but will eventually be removed
+
+```bash
+# Old way
+./bin/start.sh claude-pro-api ~/my-project
+
+# New way
+cd ~/my-project
+container-dev start claude
+```
+
+## Troubleshooting
+
+### "Command not found: container-dev"
+
+Add `~/.local/bin` to your PATH:
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Wrong Claude auth method detected
+
+Override in `~/.config/container-dev/config`:
+```bash
+FORCE_CLAUDE_AUTH=api
+```
+
+### Port already in use
+
+`container-dev` auto-assigns the next available port. Check with:
+```bash
+container-dev list
+```
+
+### Transient container not auto-replacing
+
+Check the state file:
+```bash
+cat ~/.config/container-dev/state
+```
+
+If stale, manually stop the container:
+```bash
+container-dev stop claude-transient
+```
+
+## Architecture
+
+- **Runtime**: Apple `container` CLI (not Docker/Podman)
+- **Base image**: Fedora 44
+- **SSH**: Dedicated ed25519 keypair at `~/.config/container-dev/keys/`
+- **State tracking**: `~/.config/container-dev/state`
+- **Config**: `~/.config/container-dev/config`
+
+See [CLAUDE.md](CLAUDE.md) for implementation details.
+
+## Adding New Profiles
+
+See [CLAUDE.md](CLAUDE.md) for instructions on adding Opencode and Pi profiles.
