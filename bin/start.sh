@@ -267,15 +267,40 @@ ENV_FILE="$PROFILE_DIR/.env"
 USER_ENV_FILE="$CONFIG_DIR/env"
 ENV_FILE_ARGS=()
 
+# Helper function to read env file and convert to -e flags
+load_env_file() {
+  local file="$1"
+  if [[ -f "$file" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      # Skip empty lines and comments
+      [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+
+      # Trim whitespace
+      line=$(echo "$line" | xargs)
+
+      # Check if line contains '=' (KEY=VALUE format)
+      if [[ "$line" =~ = ]]; then
+        # Direct KEY=VALUE, pass as-is
+        ENV_FILE_ARGS+=("-e" "$line")
+      else
+        # Just a variable name, expand from host environment
+        local varname="$line"
+        local varvalue="${!varname:-}"
+        if [[ -n "$varvalue" ]]; then
+          ENV_FILE_ARGS+=("-e" "${varname}=${varvalue}")
+        else
+          echo "   WARN: $varname not set in environment, skipping"
+        fi
+      fi
+    done < "$file"
+  fi
+}
+
 # Load user-level env file first (personal settings)
-if [[ -f "$USER_ENV_FILE" ]]; then
-  ENV_FILE_ARGS+=(--env-file "$USER_ENV_FILE")
-fi
+load_env_file "$USER_ENV_FILE"
 
 # Load profile-level env file second (can override user settings)
-if [[ -f "$ENV_FILE" ]]; then
-  ENV_FILE_ARGS+=(--env-file "$ENV_FILE")
-fi
+load_env_file "$ENV_FILE"
 
 # ---------------------------------------------------------------------------
 # volume mounts

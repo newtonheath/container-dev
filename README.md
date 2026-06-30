@@ -97,17 +97,35 @@ Environment variables can be passed to containers at three levels:
 
 **Location:** `~/.config/container-dev/env`
 
-Create this file to pass environment variables to **all containers** across all profiles:
+Create this file to pass environment variables to **all containers** across all profiles.
+
+**Option A: Reference host environment (recommended for secrets)**
+
+List variable names only - values are read from your shell environment:
+
+```bash
+# ~/.config/container-dev/env
+JIRA_TOKEN
+JIRA_EMAIL
+GITHUB_TOKEN
+OPENAI_API_KEY
+```
+
+These variables must be set in your shell (e.g., in `~/.bashrc` or `~/.zshrc`). The container will receive their current values when started.
+
+**Option B: Direct values**
+
+Specify values directly in the file:
 
 ```bash
 # ~/.config/container-dev/env
 GITHUB_TOKEN=ghp_your_token_here
 JIRA_TOKEN=your_jira_token
-JIRA_EMAIL=you@company.com
-OPENAI_API_KEY=sk-your-key
+EDITOR=vim
+DEBUG=1
 ```
 
-These variables are available in every container you start, regardless of profile or workspace.
+**You can mix both approaches:** Variables with `=` use the specified value, variables without `=` are expanded from your environment.
 
 **Security Note:** This file stays on your machine and is never committed to git.
 
