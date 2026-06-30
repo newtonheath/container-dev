@@ -200,6 +200,9 @@ if container list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$CONTAINER_NAME
   fi
 fi
 
+# Clean up any stopped container with the same name
+container rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
+
 # ---------------------------------------------------------------------------
 # detect auth for Claude-based profiles
 # ---------------------------------------------------------------------------
