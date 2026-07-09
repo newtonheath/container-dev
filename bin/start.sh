@@ -325,7 +325,16 @@ if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
     web)
       AUTH_DIR="$CONFIG_DIR/auth/claude"
       mkdir -p "$AUTH_DIR"
-      MOUNT_ARGS+=(--volume "${AUTH_DIR}:/root/.claude")
+      # Directory-level bind mounts onto /root/.claude have proven unreliable
+      # with this container runtime (silently fail to attach on restart), so
+      # mount the individual files that actually hold login state instead.
+      CONFIG_JSON="$AUTH_DIR/claude.json"
+      [[ -f "$CONFIG_JSON" ]] || echo '{}' > "$CONFIG_JSON"
+      MOUNT_ARGS+=(--volume "${CONFIG_JSON}:/root/.claude.json")
+
+      CREDENTIALS_JSON="$AUTH_DIR/.credentials.json"
+      [[ -f "$CREDENTIALS_JSON" ]] || echo '{}' > "$CREDENTIALS_JSON"
+      MOUNT_ARGS+=(--volume "${CREDENTIALS_JSON}:/root/.claude/.credentials.json")
       ;;
   esac
 fi

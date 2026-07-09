@@ -51,6 +51,10 @@ COPY sshd_config /etc/ssh/sshd_config
 # --- Claude Code ---------------------------------------------------------
 RUN npm install -g @anthropic-ai/claude-code
 
+# Pre-create the mountpoint parent — file-level bind mounts under /root/.claude
+# need this directory to exist in the image before the container starts.
+RUN mkdir -p /root/.claude
+
 # --- workspace -----------------------------------------------------------
 WORKDIR /workspace
 
