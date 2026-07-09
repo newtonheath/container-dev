@@ -105,7 +105,7 @@ container rmi "$TEMP_IMAGE"
 
 # Update state file
 sed -i.bak "/^${TRANSIENT_CONTAINER}|/d" "$STATE_FILE"
-echo "${PERSISTENT_NAME}|${WORKSPACE}|${TRANSIENT_PORT}|persistent" >> "$STATE_FILE"
+echo "${PERSISTENT_NAME}|${WORKSPACE}|${TRANSIENT_PORT}|persistent|${TRANSIENT_PROFILE}" >> "$STATE_FILE"
 
 # Update SSH config
 # Remove old transient entry

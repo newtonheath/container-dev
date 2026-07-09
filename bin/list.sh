@@ -68,7 +68,8 @@ if [[ -n "$TRANSIENT" ]]; then
     if [[ -n "$STATE_INFO" ]]; then
       WORKSPACE=$(echo "$STATE_INFO" | cut -d'|' -f2)
       PORT=$(echo "$STATE_INFO" | cut -d'|' -f3)
-      PROFILE="${container_name%-transient}"
+      PROFILE=$(echo "$STATE_INFO" | cut -d'|' -f5)
+      [[ -z "$PROFILE" ]] && PROFILE="${container_name%-transient}"
       echo "  ssh $container_name"
       echo "    Profile:   $PROFILE"
       echo "    Workspace: $WORKSPACE"
@@ -93,8 +94,9 @@ if [[ -n "$PERSISTENT" ]]; then
     if [[ -n "$STATE_INFO" ]]; then
       WORKSPACE=$(echo "$STATE_INFO" | cut -d'|' -f2)
       PORT=$(echo "$STATE_INFO" | cut -d'|' -f3)
-      # Extract profile (everything up to last hyphen + slug)
-      PROFILE=$(echo "$container_name" | sed 's/-[^-]*$//')
+      PROFILE=$(echo "$STATE_INFO" | cut -d'|' -f5)
+      # Fall back to guessing from the name (pre-existing state entries without a profile field)
+      [[ -z "$PROFILE" ]] && PROFILE=$(echo "$container_name" | sed 's/-[^-]*$//')
       echo "  ssh $container_name"
       echo "    Profile:   $PROFILE"
       echo "    Workspace: $WORKSPACE"

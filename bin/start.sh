@@ -409,7 +409,7 @@ container run --detach \
 # ---------------------------------------------------------------------------
 mkdir -p "$CONFIG_DIR"
 sed -i.bak "/^${CONTAINER_NAME}|/d" "$STATE_FILE" 2>/dev/null || true
-echo "${CONTAINER_NAME}|${WORKSPACE}|${SSH_PORT}|${CONTAINER_TYPE}" >> "$STATE_FILE"
+echo "${CONTAINER_NAME}|${WORKSPACE}|${SSH_PORT}|${CONTAINER_TYPE}|${PROFILE}" >> "$STATE_FILE"
 
 # ---------------------------------------------------------------------------
 # update SSH config
