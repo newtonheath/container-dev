@@ -67,12 +67,14 @@ detect_claude_auth() {
 # ---------------------------------------------------------------------------
 usage() {
   cat <<'EOF'
-Usage: container-dev create <profile> [--persistent] [options]
+Usage: container-dev create <profile> [dirs...] [--persistent] [options]
 
 Creates a new container or resumes a stopped one.
 
 Arguments:
   profile     Profile name: claude, opencode, opencode-local, pi, pi-local
+  dirs        Optional directories to mount (default: current directory)
+              Each is mounted as /workspace/<dirname> in the container
 
 Flags:
   --persistent         Create dedicated container for this workspace (never auto-replaced)
@@ -86,18 +88,19 @@ Options:
   -h, --help                    Show this help
 
 Examples:
-  # Transient container (auto-replaced on workspace change)
+  # Single workspace (mounts current directory as /workspace)
   cd ~/experiments/test
   container-dev create claude
   ssh claude-transient
 
-  # Persistent container (dedicated, never auto-replaced)
+  # Multiple workspaces (each mounted under /workspace/<name>)
+  container-dev create claude ~/projects/scraps ~/projects/relval
+  # Mounts: /workspace/scraps, /workspace/relval
+
+  # Persistent container
   cd ~/work/important-project
   container-dev create claude --persistent
   ssh claude-importantproject
-
-  # Resume a stopped container (same workspace)
-  container-dev create claude
 
 EOF
   exit 0
@@ -112,6 +115,7 @@ SIZE=""
 CPUS=""
 MEM=""
 SSH_PORT=""
+WORKSPACES=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -129,8 +133,7 @@ while [[ $# -gt 0 ]]; do
       if [[ -z "$PROFILE" ]]; then
         PROFILE="$1"
       else
-        echo "ERROR: unexpected argument '$1'" >&2
-        usage
+        WORKSPACES+=("$1")
       fi
       shift
       ;;
@@ -145,8 +148,28 @@ fi
 # ---------------------------------------------------------------------------
 # workspace detection
 # ---------------------------------------------------------------------------
-WORKSPACE="$(pwd)"
-WORKSPACE_SLUG=$(basename "$WORKSPACE" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
+MULTI_WORKSPACE=false
+
+if [[ ${#WORKSPACES[@]} -gt 0 ]]; then
+  MULTI_WORKSPACE=true
+  # Validate and resolve to absolute paths
+  for i in "${!WORKSPACES[@]}"; do
+    ws="${WORKSPACES[$i]}"
+    if [[ ! -d "$ws" ]]; then
+      echo "ERROR: directory not found: $ws" >&2
+      exit 1
+    fi
+    WORKSPACES[$i]=$(cd "$ws" && pwd)
+  done
+  # Sort for consistent state comparison
+  IFS=$'\n' WORKSPACES=($(sort <<<"${WORKSPACES[*]}")); unset IFS
+  # WORKSPACE stores comma-separated paths for state file
+  WORKSPACE=$(IFS=,; echo "${WORKSPACES[*]}")
+  WORKSPACE_SLUG=$(basename "${WORKSPACES[0]}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
+else
+  WORKSPACE="$(pwd)"
+  WORKSPACE_SLUG=$(basename "$WORKSPACE" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
+fi
 
 # ---------------------------------------------------------------------------
 # container naming
@@ -333,10 +356,18 @@ load_env_file "$ENV_FILE"
 # ---------------------------------------------------------------------------
 # volume mounts
 # ---------------------------------------------------------------------------
-MOUNT_ARGS=(
-  --volume "${WORKSPACE}:/workspace"
-  --volume "${KEY_FILE}.pub:/tmp/pubkey/authorized_keys:ro"
-)
+MOUNT_ARGS=()
+
+if [[ "$MULTI_WORKSPACE" == true ]]; then
+  for ws in "${WORKSPACES[@]}"; do
+    ws_name=$(basename "$ws")
+    MOUNT_ARGS+=(--volume "${ws}:/workspace/${ws_name}")
+  done
+else
+  MOUNT_ARGS+=(--volume "${WORKSPACE}:/workspace")
+fi
+
+MOUNT_ARGS+=(--volume "${KEY_FILE}.pub:/tmp/pubkey/authorized_keys:ro")
 
 # Auth-specific mounts (Claude-based profiles)
 if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
@@ -422,7 +453,14 @@ fi
 # launch container
 # ---------------------------------------------------------------------------
 echo ">> Starting $CONTAINER_NAME ($CONTAINER_TYPE)"
-echo "   Workspace: $WORKSPACE"
+if [[ "$MULTI_WORKSPACE" == true ]]; then
+  echo "   Workspaces:"
+  for ws in "${WORKSPACES[@]}"; do
+    echo "     /workspace/$(basename "$ws") → $ws"
+  done
+else
+  echo "   Workspace: $WORKSPACE"
+fi
 echo "   Profile:   $PROFILE"
 echo "   Resources: cpus=$CPUS mem=$MEM"
 echo "   SSH port:  $SSH_PORT"
@@ -478,7 +516,13 @@ EOF
 echo "✓ Container ready"
 echo ""
 echo "  SSH:    ssh $CONTAINER_NAME"
-echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
+if [[ "$MULTI_WORKSPACE" == true ]]; then
+  for ws in "${WORKSPACES[@]}"; do
+    echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace/$(basename "$ws")"
+  done
+else
+  echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
+fi
 echo ""
 if [[ "$PERSISTENT" == false ]]; then
   echo "  Type:   Transient (will auto-replace when switching workspaces)"

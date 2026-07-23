@@ -7,9 +7,8 @@ if [[ -f /tmp/pubkey/authorized_keys ]]; then
   chmod 600 /root/.ssh/authorized_keys
 fi
 
-# Get workspace info from environment (passed by start.sh)
+# Get workspace info from environment (passed by create.sh)
 WORKSPACE_PATH="${WORKSPACE_PATH:-/workspace}"
-WORKSPACE_NAME=$(basename "$WORKSPACE_PATH")
 CONTAINER_NAME="${CONTAINER_NAME:-unknown}"
 CLAUDE_AUTH_TYPE="${CLAUDE_AUTH_TYPE:-unknown}"
 
@@ -18,11 +17,23 @@ cat > /etc/motd <<MOTD
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Container: ${CONTAINER_NAME}
   Profile:   claude
-  Workspace: ${WORKSPACE_PATH}
   Tool:      Claude Code
   Backend:   Claude API (${CLAUDE_AUTH_TYPE})
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 MOTD
+
+if [[ "$WORKSPACE_PATH" == *,* ]]; then
+  echo "  Workspaces:" >> /etc/motd
+  IFS=',' read -ra WS_PATHS <<< "$WORKSPACE_PATH"
+  for ws in "${WS_PATHS[@]}"; do
+    echo "    /workspace/$(basename "$ws")" >> /etc/motd
+  done
+  WORKSPACE_NAME="$CONTAINER_NAME"
+else
+  echo "  Workspace: ${WORKSPACE_PATH}" >> /etc/motd
+  WORKSPACE_NAME=$(basename "$WORKSPACE_PATH")
+fi
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >> /etc/motd
 
 # Configure PS1 to show workspace
 echo "export PS1='[\u@${WORKSPACE_NAME}:\w]\\$ '" >> /root/.bashrc

@@ -90,9 +90,24 @@ if [[ -n "$TRANSIENT" ]]; then
       PROFILE=$(echo "$STATE_INFO" | cut -d'|' -f5)
       [[ -z "$PROFILE" ]] && PROFILE="${container_name%-transient}"
       echo "  ssh $container_name  [$container_state]"
-      echo "  code --remote ssh-remote+$container_name /workspace"
+      if [[ "$WORKSPACE" == *,* ]]; then
+        IFS=',' read -ra WS_LIST <<< "$WORKSPACE"
+        for ws in "${WS_LIST[@]}"; do
+          echo "  code --remote ssh-remote+$container_name /workspace/$(basename "$ws")"
+        done
+      else
+        echo "  code --remote ssh-remote+$container_name /workspace"
+      fi
       echo "    Profile:   $PROFILE"
-      echo "    Workspace: $WORKSPACE"
+      if [[ "$WORKSPACE" == *,* ]]; then
+        echo "    Workspaces:"
+        IFS=',' read -ra WS_LIST <<< "$WORKSPACE"
+        for ws in "${WS_LIST[@]}"; do
+          echo "      /workspace/$(basename "$ws") → $ws"
+        done
+      else
+        echo "    Workspace: $WORKSPACE"
+      fi
       echo "    Port:      $PORT"
       echo ""
     else
@@ -117,9 +132,24 @@ if [[ -n "$PERSISTENT" ]]; then
       PROFILE=$(echo "$STATE_INFO" | cut -d'|' -f5)
       [[ -z "$PROFILE" ]] && PROFILE=$(echo "$container_name" | sed 's/-[^-]*$//')
       echo "  ssh $container_name  [$container_state]"
-      echo "  code --remote ssh-remote+$container_name /workspace"
+      if [[ "$WORKSPACE" == *,* ]]; then
+        IFS=',' read -ra WS_LIST <<< "$WORKSPACE"
+        for ws in "${WS_LIST[@]}"; do
+          echo "  code --remote ssh-remote+$container_name /workspace/$(basename "$ws")"
+        done
+      else
+        echo "  code --remote ssh-remote+$container_name /workspace"
+      fi
       echo "    Profile:   $PROFILE"
-      echo "    Workspace: $WORKSPACE"
+      if [[ "$WORKSPACE" == *,* ]]; then
+        echo "    Workspaces:"
+        IFS=',' read -ra WS_LIST <<< "$WORKSPACE"
+        for ws in "${WS_LIST[@]}"; do
+          echo "      /workspace/$(basename "$ws") → $ws"
+        done
+      else
+        echo "    Workspace: $WORKSPACE"
+      fi
       echo "    Port:      $PORT"
       echo ""
     else
