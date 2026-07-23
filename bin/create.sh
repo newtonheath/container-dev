@@ -398,6 +398,13 @@ if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
   esac
 fi
 
+# Claude projects mount (for cost tracking via codeburn)
+if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
+  CLAUDE_PROJECTS_DIR="$HOME/.claude/projects"
+  mkdir -p "$CLAUDE_PROJECTS_DIR"
+  MOUNT_ARGS+=(--volume "${CLAUDE_PROJECTS_DIR}:/root/.claude/projects")
+fi
+
 # Model mounts (local profiles)
 if [[ "$PROFILE" =~ -local$ ]]; then
   MODEL_DIR="$CONFIG_DIR/models"
@@ -516,13 +523,7 @@ EOF
 echo "✓ Container ready"
 echo ""
 echo "  SSH:    ssh $CONTAINER_NAME"
-if [[ "$MULTI_WORKSPACE" == true ]]; then
-  for ws in "${WORKSPACES[@]}"; do
-    echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace/$(basename "$ws")"
-  done
-else
-  echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
-fi
+echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
 echo ""
 if [[ "$PERSISTENT" == false ]]; then
   echo "  Type:   Transient (will auto-replace when switching workspaces)"

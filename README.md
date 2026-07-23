@@ -4,11 +4,12 @@ Containerized development environments for macOS using Apple's `container` CLI. 
 
 ## Features
 
-- **Multiple AI coding tools**: Claude Code, Opencode, Pi (with Claude or local llama.cpp backends)
+- **Claude Code in a container**: Isolated coding assistant with auto-detected auth (Vertex AI, API key, or browser OAuth)
 - **Transient by default**: Drop-in/drop-out workspace switching with auto-cleanup
 - **Persistent opt-in**: Long-lived containers for important projects
+- **Multiple workspaces**: Mount several directories into a single container
 - **Machine-level auth**: Configure Claude authentication once per machine
-- **Simple command interface**: `container-dev start/stop/list/persist`
+- **Simple command interface**: `container-dev create/delete/list`
 
 ## Installation
 
@@ -22,19 +23,19 @@ This creates a symlink at `~/.local/bin/container-dev`. Make sure `~/.local/bin`
 ## Quick Start
 
 ```bash
-# Start a transient container (auto-replaced when switching workspaces)
+# Create a transient container (auto-replaced when switching workspaces)
 cd ~/my-project
-container-dev start claude
+container-dev create claude
 ssh claude-transient
 
 # Work in another project (auto-replaces the transient container)
 cd ~/another-project
-container-dev start claude
+container-dev create claude
 ssh claude-transient  # Same SSH hostname, different workspace
 
 # Create a persistent container for an important project
 cd ~/work/critical-project
-container-dev start claude --persistent
+container-dev create claude --persistent
 ssh claude-criticalproject  # Dedicated container, never auto-replaced
 ```
 
@@ -43,10 +44,8 @@ ssh claude-criticalproject  # Dedicated container, never auto-replaced
 | Profile | Tool | Backend | Use Case |
 |---------|------|---------|----------|
 | `claude` | Claude Code | Claude API | Main AI coding assistant (auth auto-detected) |
-| `opencode` | Opencode | Claude API | Alternative tool with Claude backend |
-| `opencode-local` | Opencode | llama.cpp | Offline/privacy-focused with local model |
-| `pi` | Pi | Claude API | Pi coding assistant with Claude |
-| `pi-local` | Pi | llama.cpp | Pi with local model |
+
+Legacy profiles (`claude-vertex`, `claude-pro-api`, `claude-pro-web`) still work but are deprecated. Use the unified `claude` profile instead.
 
 ## Container Types
 
@@ -54,18 +53,18 @@ ssh claude-criticalproject  # Dedicated container, never auto-replaced
 
 **Best for**: Quick experiments, switching between many repos
 
-- **One per profile**: `claude-transient`, `opencode-transient`
+- **One per profile**: `claude-transient`
 - **Auto-replaced**: When you switch workspaces, the old container is stopped and recreated
 - **SSH hostname**: `ssh claude-transient`
 
 ```bash
 cd ~/experiments/test-1
-container-dev start claude
+container-dev create claude
 ssh claude-transient
 
 cd ~/experiments/test-2
-container-dev start claude  # Replaces test-1 container
-ssh claude-transient        # Same hostname, new workspace
+container-dev create claude  # Replaces test-1 container
+ssh claude-transient         # Same hostname, new workspace
 ```
 
 ### Persistent (Opt-in with `--persistent`)
@@ -73,25 +72,37 @@ ssh claude-transient        # Same hostname, new workspace
 **Best for**: Long-lived projects you return to frequently
 
 - **One per workspace**: `claude-importantproject`, `claude-clientwork`
-- **Never auto-replaced**: Dedicated container stays running until you explicitly stop it
+- **Never auto-replaced**: Dedicated container stays until you explicitly delete it
 - **SSH hostname**: `ssh claude-importantproject`
 
 ```bash
 cd ~/work/important-project
-container-dev start claude --persistent
+container-dev create claude --persistent
 ssh claude-importantproject
 
 cd ~/work/another-project
-container-dev start claude --persistent
+container-dev create claude --persistent
 ssh claude-anotherproject
 
 # Both containers stay running simultaneously
 container-dev list
 ```
 
+## Multiple Workspaces
+
+Mount several directories into a single container:
+
+```bash
+container-dev create claude ~/projects/scraps ~/projects/relval
+# Mounts: /workspace/scraps, /workspace/relval
+ssh claude-transient
+```
+
+Each directory is mounted under `/workspace/<dirname>` inside the container.
+
 ## Environment Variables
 
-Environment variables can be passed to containers at three levels:
+Environment variables can be passed to containers at two levels:
 
 ### 1. User-Level (Global)
 
@@ -108,7 +119,6 @@ List variable names only - values are read from your shell environment:
 JIRA_TOKEN
 JIRA_EMAIL
 GITHUB_TOKEN
-OPENAI_API_KEY
 ```
 
 These variables must be set in your shell (e.g., in `~/.bashrc` or `~/.zshrc`). The container will receive their current values when started.
@@ -141,28 +151,15 @@ ANTHROPIC_API_KEY=sk-ant-your-key-here
 EDITOR=vim
 ```
 
-These are only loaded when starting that specific profile.
+These are only loaded when creating that specific profile.
 
 **Note:** Profile `.env` files can be committed to git for shared defaults, but avoid committing secrets.
-
-### 3. One-Time Override
-
-Pass environment variables for a single container start:
-
-```bash
-# Set a variable just for this container
-SPECIAL_TOKEN=secret123 container-dev start claude --persistent
-
-# Multiple variables
-DEBUG=1 LOG_LEVEL=verbose container-dev start opencode
-```
 
 ### Loading Order
 
 Variables are loaded in this order (later overrides earlier):
 1. User-level env file (`~/.config/container-dev/env`)
 2. Profile-level env file (`profiles/<profile>/.env`)
-3. One-time overrides (command-line)
 
 ## Authentication (Claude-based profiles)
 
@@ -174,8 +171,8 @@ Authentication is **machine-level**: configure once per machine, and `container-
 # On your work laptop with gcloud
 gcloud auth application-default login
 
-# Start container (auto-detects Vertex)
-container-dev start claude
+# Create container (auto-detects Vertex)
+container-dev create claude
 ```
 
 The unified `claude` profile detects the gcloud ADC file and uses Vertex AI automatically.
@@ -194,7 +191,7 @@ Or in the profile-level env file:
 ANTHROPIC_API_KEY=sk-ant-your-key-here
 ```
 
-`container-dev start claude` will auto-detect the API key.
+`container-dev create claude` will auto-detect the API key.
 
 ### Browser OAuth (fallback)
 
@@ -209,107 +206,82 @@ FORCE_CLAUDE_AUTH=vertex  # or: api, web
 
 ## Commands
 
-### `container-dev start <profile> [--persistent]`
+### `container-dev create <profile> [dirs...] [--persistent]`
 
-Start a container for the current workspace.
+Create a container for the current workspace, or resume a stopped one.
 
 **Options:**
 - `--persistent` / `-p` - Create dedicated container (never auto-replaced)
 - `--size small|medium|large` - Resource preset (default: medium)
 - `--cpus <n>` - CPU cores
 - `--mem <size>` - Memory limit (e.g., `4g`)
+- `--port <port>` - Host SSH port (default: auto-assigned)
 
 **Examples:**
 ```bash
 # Transient (default)
-container-dev start claude
+container-dev create claude
 
 # Persistent
-container-dev start claude --persistent
+container-dev create claude --persistent
+
+# Multiple workspaces
+container-dev create claude ~/projects/scraps ~/projects/relval
 
 # With custom resources
-container-dev start opencode-local --size large
-container-dev start pi --cpus 6 --mem 8g
+container-dev create claude --size large
+container-dev create claude --cpus 6 --mem 8g
 ```
 
-### `container-dev stop <container-name>`
+### `container-dev delete <container-name>`
 
-Stop and remove a container. Warns before stopping persistent containers.
+Permanently remove a container and clean up its SSH config and state. Warns before deleting persistent containers.
 
 ```bash
-container-dev stop claude-transient
-container-dev stop claude-importantproject
+container-dev delete claude-transient
+container-dev delete claude-importantproject
 ```
 
 ### `container-dev list`
 
-Show all running containers with their type (transient vs persistent), workspace, and SSH hostname.
+Show all containers (running and stopped) with their type, workspace, and SSH hostname. Automatically cleans up stale entries for containers removed outside of `container-dev`.
 
 ```bash
 $ container-dev list
 
-📦 Transient Containers (auto-replaced on workspace change)
-───────────────────────────────────────────────────────────
-  ssh claude-transient
+Container-dev Environments
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Transient Containers (auto-replaced on workspace change)
+───────────────────────────────────────────────────────────────────
+  ssh claude-transient  [running]
+  code --remote ssh-remote+claude-transient /workspace
     Profile:   claude
     Workspace: /Users/you/experiments/test
     Port:      2222
 
-🔒 Persistent Containers (dedicated, never auto-replaced)
-───────────────────────────────────────────────────────────
-  ssh claude-bigproject
+Persistent Containers (dedicated, never auto-replaced)
+───────────────────────────────────────────────────────────────────
+  ssh claude-bigproject  [running]
+  code --remote ssh-remote+claude-bigproject /workspace
     Profile:   claude
     Workspace: /Users/you/work/bigproject
     Port:      2223
-
-  ssh opencode-local-research
-    Profile:   opencode-local
-    Workspace: /Users/you/research/ml
-    Port:      2231
 ```
 
-### `container-dev persist`
+### Pause and Resume
 
-Convert the current workspace's transient container to persistent.
+Use the native Apple `container` CLI directly:
 
 ```bash
-cd ~/work/project
-container-dev start claude        # Transient
-# ...work for a while, decide to keep it...
-container-dev persist             # Now persistent
+# Pause (frees memory, preserves filesystem)
+container stop claude-transient
+
+# Resume
+container start claude-transient
 ```
 
-**Note:** Full implementation pending - currently guides manual recreation.
-
-## Local Models (for `*-local` profiles)
-
-Profiles ending in `-local` (e.g., `opencode-local`, `pi-local`) use llama.cpp for inference.
-
-### Model Storage
-
-Models are stored in `~/.config/container-dev/models/` and shared across all local profiles.
-
-### Download a Model
-
-```bash
-mkdir -p ~/.config/container-dev/models
-cd ~/.config/container-dev/models
-
-# Example: CodeLlama 7B (4.8 GB)
-wget https://huggingface.co/TheBloke/CodeLlama-7B-GGUF/resolve/main/codellama-7b.Q4_K_M.gguf
-
-# Example: DeepSeek Coder 6.7B (4.1 GB)
-wget https://huggingface.co/TheBloke/deepseek-coder-6.7b-instruct-GGUF/resolve/main/deepseek-coder-6.7b-instruct.Q4_K_M.gguf
-```
-
-### Configure Model
-
-Create `profiles/opencode-local/.env`:
-```bash
-LLAMA_MODEL_PATH=/root/.cache/models/codellama-7b.Q4_K_M.gguf
-LLAMA_CONTEXT_SIZE=8192
-LLAMA_THREADS=4
-```
+`container-dev create` also resumes a stopped container if the workspace matches.
 
 ## Workspace Naming
 
@@ -317,7 +289,7 @@ For persistent containers, the workspace directory name becomes part of the SSH 
 
 ```bash
 cd ~/work/important-project
-container-dev start claude --persistent
+container-dev create claude --persistent
 # Creates: claude-importantproject
 # SSH: ssh claude-importantproject
 ```
@@ -327,9 +299,9 @@ container-dev start claude --persistent
 ## VS Code Integration
 
 ```bash
-# Start container
+# Create container
 cd ~/my-project
-container-dev start claude --persistent
+container-dev create claude --persistent
 
 # Connect VS Code
 code --remote ssh-remote+claude-myproject /workspace
@@ -349,12 +321,11 @@ If you were using `claude-vertex`, `claude-pro-api`, or `claude-pro-web`:
 3. Old profiles still work (deprecated) but will eventually be removed
 
 ```bash
-# Old way
-./bin/start.sh claude-pro-api ~/my-project
+# Old way (deprecated)
+container-dev create claude-vertex
 
 # New way
-cd ~/my-project
-container-dev start claude
+container-dev create claude
 ```
 
 ## Troubleshooting
@@ -388,9 +359,9 @@ Check the state file:
 cat ~/.config/container-dev/state
 ```
 
-If stale, manually stop the container:
+If stale, delete the container:
 ```bash
-container-dev stop claude-transient
+container-dev delete claude-transient
 ```
 
 ## Architecture
@@ -405,4 +376,4 @@ See [CLAUDE.md](CLAUDE.md) for implementation details.
 
 ## Adding New Profiles
 
-See [CLAUDE.md](CLAUDE.md) for instructions on adding Opencode and Pi profiles.
+See [CLAUDE.md](CLAUDE.md) for instructions on adding new profiles.

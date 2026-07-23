@@ -90,14 +90,7 @@ if [[ -n "$TRANSIENT" ]]; then
       PROFILE=$(echo "$STATE_INFO" | cut -d'|' -f5)
       [[ -z "$PROFILE" ]] && PROFILE="${container_name%-transient}"
       echo "  ssh $container_name  [$container_state]"
-      if [[ "$WORKSPACE" == *,* ]]; then
-        IFS=',' read -ra WS_LIST <<< "$WORKSPACE"
-        for ws in "${WS_LIST[@]}"; do
-          echo "  code --remote ssh-remote+$container_name /workspace/$(basename "$ws")"
-        done
-      else
-        echo "  code --remote ssh-remote+$container_name /workspace"
-      fi
+      echo "  code --remote ssh-remote+$container_name /workspace"
       echo "    Profile:   $PROFILE"
       if [[ "$WORKSPACE" == *,* ]]; then
         echo "    Workspaces:"
@@ -132,14 +125,7 @@ if [[ -n "$PERSISTENT" ]]; then
       PROFILE=$(echo "$STATE_INFO" | cut -d'|' -f5)
       [[ -z "$PROFILE" ]] && PROFILE=$(echo "$container_name" | sed 's/-[^-]*$//')
       echo "  ssh $container_name  [$container_state]"
-      if [[ "$WORKSPACE" == *,* ]]; then
-        IFS=',' read -ra WS_LIST <<< "$WORKSPACE"
-        for ws in "${WS_LIST[@]}"; do
-          echo "  code --remote ssh-remote+$container_name /workspace/$(basename "$ws")"
-        done
-      else
-        echo "  code --remote ssh-remote+$container_name /workspace"
-      fi
+      echo "  code --remote ssh-remote+$container_name /workspace"
       echo "    Profile:   $PROFILE"
       if [[ "$WORKSPACE" == *,* ]]; then
         echo "    Workspaces:"

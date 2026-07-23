@@ -1,3 +1,4 @@
 .DS_Store
 profiles/*/.env
 bin/container-dev
+settings.local.json
