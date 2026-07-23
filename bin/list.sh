@@ -1,38 +1,57 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# List all container-dev containers with status
+# List all container-dev containers with status (running and stopped)
 
 STATE_FILE="$HOME/.config/container-dev/state"
+SSH_CONFIG="$HOME/.ssh/config"
 
 echo "Container-dev Environments"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Get all running containers (skip header line)
-RUNNING_CONTAINERS=$(container list 2>/dev/null | awk 'NR>1{print $1}' || true)
+# Get all containers (running + stopped), with name and state
+ALL_CONTAINERS=$(container list --all 2>/dev/null | awk 'NR>1{print $1, $5}' || true)
 
-if [[ -z "$RUNNING_CONTAINERS" ]]; then
-  echo "No containers running."
-  echo ""
-  echo "Start a container with:"
-  echo "  container-dev start <profile>"
-  exit 0
+if [[ -z "$ALL_CONTAINERS" ]]; then
+  ALL_CONTAINERS=""
 fi
 
-# Filter to only container-dev containers (ending in -transient or with workspace slugs)
+# Filter to only container-dev containers
 FILTERED=""
-while IFS= read -r name; do
+while IFS=' ' read -r name state; do
+  [[ -z "$name" ]] && continue
   if [[ "$name" =~ -transient$ ]] || [[ "$name" =~ ^(claude|opencode|pi)(-[a-z0-9]+)*-[a-z0-9]+$ ]]; then
-    FILTERED="${FILTERED}${name}"$'\n'
+    FILTERED="${FILTERED}${name} ${state}"$'\n'
   fi
-done <<< "$RUNNING_CONTAINERS"
+done <<< "$ALL_CONTAINERS"
+
+# Reconcile: clean up state/SSH entries for containers that no longer exist
+if [[ -f "$STATE_FILE" ]]; then
+  LIVE_NAMES=$(echo "$ALL_CONTAINERS" | awk '{print $1}')
+  STALE_CLEANED=false
+  while IFS='|' read -r sname sworkspace sport stype sprofile; do
+    [[ -z "$sname" ]] && continue
+    if ! echo "$LIVE_NAMES" | grep -qx "$sname"; then
+      # Container no longer exists — clean up
+      sed -i.bak "/^${sname}|/d" "$STATE_FILE" 2>/dev/null || true
+      if [[ -f "$SSH_CONFIG" ]] && grep -q "^Host ${sname}$" "$SSH_CONFIG" 2>/dev/null; then
+        sed -i.bak "/^Host ${sname}$/,/^$/d" "$SSH_CONFIG"
+      fi
+      STALE_CLEANED=true
+    fi
+  done < "$STATE_FILE"
+  if [[ "$STALE_CLEANED" == true ]]; then
+    echo "(Cleaned up stale entries for removed containers)"
+    echo ""
+  fi
+fi
 
 if [[ -z "$FILTERED" ]]; then
-  echo "No container-dev containers running."
+  echo "No container-dev containers found."
   echo ""
-  echo "Start a container with:"
-  echo "  container-dev start <profile>"
+  echo "Create a container with:"
+  echo "  container-dev create <profile>"
   exit 0
 fi
 
@@ -40,12 +59,12 @@ fi
 TRANSIENT=""
 PERSISTENT=""
 
-while IFS= read -r name; do
+while IFS=' ' read -r name state; do
   [[ -z "$name" ]] && continue
   if [[ "$name" == *-transient ]]; then
-    TRANSIENT="${TRANSIENT}${name}"$'\n'
+    TRANSIENT="${TRANSIENT}${name} ${state}"$'\n'
   else
-    PERSISTENT="${PERSISTENT}${name}"$'\n'
+    PERSISTENT="${PERSISTENT}${name} ${state}"$'\n'
   fi
 done <<< "$FILTERED"
 
@@ -59,9 +78,9 @@ get_state_info() {
 
 # Display transient containers
 if [[ -n "$TRANSIENT" ]]; then
-  echo "📦 Transient Containers (auto-replaced on workspace change)"
+  echo "Transient Containers (auto-replaced on workspace change)"
   echo "───────────────────────────────────────────────────────────────────"
-  while IFS= read -r container_name; do
+  while IFS=' ' read -r container_name container_state; do
     [[ -z "$container_name" ]] && continue
 
     STATE_INFO=$(get_state_info "$container_name")
@@ -70,13 +89,13 @@ if [[ -n "$TRANSIENT" ]]; then
       PORT=$(echo "$STATE_INFO" | cut -d'|' -f3)
       PROFILE=$(echo "$STATE_INFO" | cut -d'|' -f5)
       [[ -z "$PROFILE" ]] && PROFILE="${container_name%-transient}"
-      echo "  ssh $container_name"
+      echo "  ssh $container_name  [$container_state]"
       echo "    Profile:   $PROFILE"
       echo "    Workspace: $WORKSPACE"
       echo "    Port:      $PORT"
       echo ""
     else
-      echo "  ssh $container_name"
+      echo "  $container_name  [$container_state]"
       echo "    (No state info)"
       echo ""
     fi
@@ -85,9 +104,9 @@ fi
 
 # Display persistent containers
 if [[ -n "$PERSISTENT" ]]; then
-  echo "🔒 Persistent Containers (dedicated, never auto-replaced)"
+  echo "Persistent Containers (dedicated, never auto-replaced)"
   echo "───────────────────────────────────────────────────────────────────"
-  while IFS= read -r container_name; do
+  while IFS=' ' read -r container_name container_state; do
     [[ -z "$container_name" ]] && continue
 
     STATE_INFO=$(get_state_info "$container_name")
@@ -95,15 +114,14 @@ if [[ -n "$PERSISTENT" ]]; then
       WORKSPACE=$(echo "$STATE_INFO" | cut -d'|' -f2)
       PORT=$(echo "$STATE_INFO" | cut -d'|' -f3)
       PROFILE=$(echo "$STATE_INFO" | cut -d'|' -f5)
-      # Fall back to guessing from the name (pre-existing state entries without a profile field)
       [[ -z "$PROFILE" ]] && PROFILE=$(echo "$container_name" | sed 's/-[^-]*$//')
-      echo "  ssh $container_name"
+      echo "  ssh $container_name  [$container_state]"
       echo "    Profile:   $PROFILE"
       echo "    Workspace: $WORKSPACE"
       echo "    Port:      $PORT"
       echo ""
     else
-      echo "  ssh $container_name"
+      echo "  $container_name  [$container_state]"
       echo "    (No state info)"
       echo ""
     fi
@@ -111,8 +129,17 @@ if [[ -n "$PERSISTENT" ]]; then
 fi
 
 # Count totals
-TRANSIENT_COUNT=$(echo "$TRANSIENT" | grep -c . || echo 0)
-PERSISTENT_COUNT=$(echo "$PERSISTENT" | grep -c . || echo 0)
+RUNNING_COUNT=$(echo "$FILTERED" | grep -c ' running$' || echo 0)
+STOPPED_COUNT=$(echo "$FILTERED" | grep -cv ' running$' 2>/dev/null || echo 0)
+# Subtract empty trailing line from stopped count
+[[ "$STOPPED_COUNT" -gt 0 ]] && STOPPED_COUNT=$((STOPPED_COUNT - $(echo "$FILTERED" | grep -c '^$' || echo 0)))
+
+TRANSIENT_COUNT=$(echo "$TRANSIENT" | grep -c '[^ ]' || echo 0)
+PERSISTENT_COUNT=$(echo "$PERSISTENT" | grep -c '[^ ]' || echo 0)
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Total: $TRANSIENT_COUNT transient, $PERSISTENT_COUNT persistent"
+echo "Total: $RUNNING_COUNT running, $STOPPED_COUNT stopped ($TRANSIENT_COUNT transient, $PERSISTENT_COUNT persistent)"
+echo ""
+echo "  Pause:   container stop <name>"
+echo "  Resume:  container start <name>"
+echo "  Delete:  container-dev delete <name>"

@@ -11,18 +11,19 @@ Uses Apple's `container` CLI (not Docker or Podman). Commands are `container bui
 Main entry point: `container-dev` (symlinked to `~/.local/bin/container-dev` by `install.sh`)
 
 Subcommands:
-- `container-dev start <profile> [--persistent]` → `bin/start.sh`
-- `container-dev stop <container-name>` → `bin/stop.sh`
+- `container-dev create <profile> [--persistent]` → `bin/create.sh`
+- `container-dev delete <container-name>` → `bin/delete.sh`
 - `container-dev list` → `bin/list.sh`
-- `container-dev persist` → `bin/persist.sh`
+Pause/resume uses native Apple `container` CLI directly:
+- `container stop <container-name>` — pause (frees memory, preserves filesystem)
+- `container start <container-name>` — resume a paused container
 
 ## Key Files
 
 - `bin/container-dev` — Main command wrapper (dispatches to subcommands)
-- `bin/start.sh` — Builds image if needed, runs container, manages state, writes SSH config
-- `bin/stop.sh` — Stops and removes container, warns for persistent, cleans up state
-- `bin/list.sh` — Shows all containers with transient/persistent status
-- `bin/persist.sh` — Converts transient container to persistent (in progress)
+- `bin/create.sh` — Builds image if needed, runs or resumes container, manages state, writes SSH config
+- `bin/delete.sh` — Permanently removes container, cleans up state and SSH config
+- `bin/list.sh` — Shows all containers (running and stopped) with status, reconciles stale entries
 - `profiles/<name>/Dockerfile` — Fedora 44 base, openssh-server, tool installation
 - `profiles/<name>/entrypoint.sh` — Copies SSH pubkey, writes config, starts sshd
 - `profiles/<name>/sshd_config` — Hardened SSH config (pubkey only, no password)
@@ -56,27 +57,35 @@ Subcommands:
 - **Name pattern**: `{profile}-transient` (e.g., `claude-transient`)
 - **Behavior**: Auto-replaced when workspace changes
 - **Use case**: Quick experiments, many repos
-- **Created with**: `container-dev start <profile>`
+- **Created with**: `container-dev create <profile>`
 
 ### Persistent Containers (Opt-in)
 
 - **Name pattern**: `{profile}-{workspace-slug}` (e.g., `claude-importantproject`)
-- **Behavior**: Never auto-replaced, stays until explicitly stopped
+- **Behavior**: Never auto-replaced, stays until explicitly deleted
 - **Use case**: Long-lived projects
-- **Created with**: `container-dev start <profile> --persistent`
+- **Created with**: `container-dev create <profile> --persistent`
+
+### Container States
+
+- **Running**: container is active, SSH accessible, consuming memory
+- **Stopped**: container paused via `container stop <name>`, filesystem preserved, memory freed. Resume with `container start <name>` or `container-dev create <profile>`.
+- **Deleted**: container permanently removed via `container-dev delete <name>`, SSH config and state cleaned up
 
 ### State Tracking
 
 State file: `~/.config/container-dev/state`
 
-Format: `{container-name}|{workspace-path}|{ssh-port}|{type}`
+Format: `{container-name}|{workspace-path}|{ssh-port}|{type}|{profile}`
 
 Example:
 ```
-claude-transient|/Users/you/experiments/test|2222|transient
-claude-bigproject|/Users/you/work/bigproject|2223|persistent
-opencode-local-research|/Users/you/research/ml|2231|persistent
+claude-transient|/Users/you/experiments/test|2222|transient|claude
+claude-bigproject|/Users/you/work/bigproject|2223|persistent|claude
+opencode-local-research|/Users/you/research/ml|2231|persistent|opencode-local
 ```
+
+The `list` command reconciles stale entries: if a container was removed outside of `container-dev` (e.g., via `container rm` or `container prune`), `list` automatically cleans up orphaned state file and SSH config entries.
 
 ## Authentication (Claude-based profiles)
 
@@ -139,13 +148,13 @@ For profiles matching `*-local` pattern:
 ### SSH Keypair
 
 - **Location**: `~/.config/container-dev/keys/container_ed25519`
-- **Generated**: Once by `start.sh` if absent
+- **Generated**: Once by `create.sh` if absent
 - **Shared**: Across all profiles
 - **Security**: Dedicated keypair, never uses user's personal SSH keys
 
 ### SSH Config Entries
 
-Auto-managed by `start.sh` and `stop.sh`.
+Auto-managed by `create.sh` and `delete.sh`.
 
 **Format:**
 ```
@@ -167,7 +176,7 @@ Host {container-name}
 
 ### Strategy
 
-- Each profile has a **base port** (defined in `profile_port()` in `start.sh`)
+- Each profile has a **base port** (defined in `profile_port()` in `create.sh`)
 - Transient container uses base port
 - Persistent containers get next available port if base is taken
 - Auto-increments to avoid conflicts
@@ -193,7 +202,7 @@ profile_port() {
 
 ## Environment Variables Passed to Container
 
-`start.sh` sets these env vars for container use:
+`create.sh` sets these env vars for container use:
 
 ```bash
 WORKSPACE_PATH=/Users/you/path/to/workspace
@@ -220,7 +229,7 @@ profiles/newtool/
 
 ### 2. Update Port Map
 
-Add case to `profile_port()` in `bin/start.sh`:
+Add case to `profile_port()` in `bin/create.sh`:
 
 ```bash
 newtool)         echo 2250 ;;
@@ -289,10 +298,10 @@ exec /usr/sbin/sshd -D
 
 ### 5. Auth Detection (for Claude-based backends)
 
-If your tool uses Claude as a backend, add detection logic in `start.sh`:
+If your tool uses Claude as a backend, add detection logic in `create.sh`:
 
 ```bash
-# In start.sh, volume mount section:
+# In create.sh, volume mount section:
 if [[ "$PROFILE" =~ ^(claude|opencode|pi|newtool)$ ]]; then
   case "$CLAUDE_AUTH_TYPE" in
     vertex) ... ;;
@@ -328,9 +337,8 @@ CONFIG
 - [x] `install.sh` - Symlink installer
 - [x] `bin/container-dev` - Main command wrapper
 - [x] `bin/list.sh` - Container listing
-- [x] `bin/persist.sh` - Transient→persistent conversion (partial)
-- [x] `bin/start.sh` - Transient/persistent lifecycle
-- [x] `bin/stop.sh` - Persistent warnings
+- [x] `bin/create.sh` - Create/resume container lifecycle
+- [x] `bin/delete.sh` - Permanent container removal with cleanup
 - [x] State file management
 
 ### Phase 2: Auth Unification ✅
@@ -350,7 +358,6 @@ CONFIG
 - [ ] `profiles/pi-local/` - Pi with llama.cpp
 
 ### Phase 5: Polish 🚧
-- [ ] Complete `persist.sh` implementation
 - [ ] Comprehensive testing
 - [ ] Migration guide for old profiles
 

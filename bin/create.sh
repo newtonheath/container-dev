@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# start.sh — launch a container-dev environment (transient or persistent)
+# create.sh — create (or resume) a container-dev environment
 #
 # Usage:
-#   container-dev start <profile> [--persistent] [options]
+#   container-dev create <profile> [--persistent] [options]
 #
 set -euo pipefail
 
@@ -67,7 +67,9 @@ detect_claude_auth() {
 # ---------------------------------------------------------------------------
 usage() {
   cat <<'EOF'
-Usage: container-dev start <profile> [--persistent] [options]
+Usage: container-dev create <profile> [--persistent] [options]
+
+Creates a new container or resumes a stopped one.
 
 Arguments:
   profile     Profile name: claude, opencode, opencode-local, pi, pi-local
@@ -86,13 +88,16 @@ Options:
 Examples:
   # Transient container (auto-replaced on workspace change)
   cd ~/experiments/test
-  container-dev start claude
+  container-dev create claude
   ssh claude-transient
 
   # Persistent container (dedicated, never auto-replaced)
   cd ~/work/important-project
-  container-dev start claude --persistent
+  container-dev create claude --persistent
   ssh claude-importantproject
+
+  # Resume a stopped container (same workspace)
+  container-dev create claude
 
 EOF
   exit 0
@@ -169,10 +174,11 @@ if [[ ! -d "$PROFILE_DIR" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# check for existing container
+# check for existing container (running or stopped)
 # ---------------------------------------------------------------------------
-if container list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$CONTAINER_NAME"; then
-  # Container already running - check if workspace matches (for transient)
+CONTAINER_STATE=$(container list --all 2>/dev/null | awk -v n="$CONTAINER_NAME" 'NR>1 && $1==n {print $5}')
+
+if [[ "$CONTAINER_STATE" == "running" ]]; then
   if [[ "$PERSISTENT" == false ]]; then
     EXISTING_WORKSPACE=$(grep "^${CONTAINER_NAME}|" "$STATE_FILE" 2>/dev/null | cut -d'|' -f2 || echo "")
     if [[ "$EXISTING_WORKSPACE" == "$WORKSPACE" ]]; then
@@ -186,7 +192,7 @@ if container list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$CONTAINER_NAME
       echo "  From: $EXISTING_WORKSPACE"
       echo "  To:   $WORKSPACE"
       echo ""
-      echo "Stopping old transient container..."
+      echo "Replacing transient container..."
       container stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
       container rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
       sed -i.bak "/^${CONTAINER_NAME}|/d" "$STATE_FILE" 2>/dev/null || true
@@ -198,10 +204,32 @@ if container list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$CONTAINER_NAME
     echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
     exit 0
   fi
-fi
 
-# Clean up any stopped container with the same name
-container rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
+elif [[ -n "$CONTAINER_STATE" ]]; then
+  # Container exists but is stopped
+  EXISTING_WORKSPACE=$(grep "^${CONTAINER_NAME}|" "$STATE_FILE" 2>/dev/null | cut -d'|' -f2 || echo "")
+
+  if [[ -z "$EXISTING_WORKSPACE" ]]; then
+    # Orphaned container (no state entry), clean it up
+    echo "Removing orphaned stopped container '$CONTAINER_NAME'..."
+    container rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  elif [[ "$PERSISTENT" == false && "$EXISTING_WORKSPACE" != "$WORKSPACE" ]]; then
+    # Transient with different workspace, replace it
+    echo "Replacing stopped transient container (different workspace)..."
+    container rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    sed -i.bak "/^${CONTAINER_NAME}|/d" "$STATE_FILE" 2>/dev/null || true
+  else
+    # Same workspace (or persistent) — resume
+    echo "Resuming stopped container '$CONTAINER_NAME'..."
+    container start "$CONTAINER_NAME"
+    echo ""
+    echo "✓ Container resumed"
+    echo ""
+    echo "  SSH:    ssh $CONTAINER_NAME"
+    echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
+    exit 0
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # detect auth for Claude-based profiles
@@ -454,10 +482,11 @@ echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
 echo ""
 if [[ "$PERSISTENT" == false ]]; then
   echo "  Type:   Transient (will auto-replace when switching workspaces)"
-  echo "  Persist: container-dev persist  (convert to persistent)"
 else
   echo "  Type:   Persistent (dedicated, never auto-replaced)"
 fi
 echo ""
-echo "  List:   container-dev list"
-echo "  Stop:   container-dev stop $CONTAINER_NAME"
+echo "  List:    container-dev list"
+echo "  Pause:   container stop $CONTAINER_NAME"
+echo "  Resume:  container start $CONTAINER_NAME"
+echo "  Delete:  container-dev delete $CONTAINER_NAME"
