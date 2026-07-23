@@ -93,12 +93,19 @@ container-dev list
 Mount several directories into a single container:
 
 ```bash
+# Transient — works the same as single workspace
 container-dev create claude ~/projects/scraps ~/projects/relval
 # Mounts: /workspace/scraps, /workspace/relval
 ssh claude-transient
+
+# Persistent — requires a name (prompted if not provided)
+container-dev create claude ~/projects/scraps ~/projects/relval --persistent --name my-stack
+ssh claude-my-stack
 ```
 
 Each directory is mounted under `/workspace/<dirname>` inside the container.
+
+For persistent containers with multiple workspaces, a name is required since there's no single directory to derive one from. Pass `--name` or you'll be prompted interactively.
 
 ## Environment Variables
 
@@ -212,6 +219,7 @@ Create a container for the current workspace, or resume a stopped one.
 
 **Options:**
 - `--persistent` / `-p` - Create dedicated container (never auto-replaced)
+- `--name <slug>` - Container name suffix (prompted interactively for persistent + multiple dirs)
 - `--size small|medium|large` - Resource preset (default: medium)
 - `--cpus <n>` - CPU cores
 - `--mem <size>` - Memory limit (e.g., `4g`)
@@ -292,6 +300,14 @@ cd ~/work/important-project
 container-dev create claude --persistent
 # Creates: claude-importantproject
 # SSH: ssh claude-importantproject
+```
+
+With multiple workspaces, use `--name` to choose the name explicitly:
+
+```bash
+container-dev create claude ~/svc ~/fleet --persistent --name my-stack
+# Creates: claude-my-stack
+# SSH: ssh claude-my-stack
 ```
 
 **Tip:** Use clear, descriptive directory names for workspaces you plan to make persistent.

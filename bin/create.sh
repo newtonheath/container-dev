@@ -81,6 +81,8 @@ Flags:
                        Default: transient (auto-replaced when switching workspaces)
 
 Options:
+  --name <slug>                 Container name suffix (auto-derived from workspace directory names
+                                if not provided)
   --size <small|medium|large>   Resource preset (default: medium)
   --cpus <n>                    CPU cores (overrides --size)
   --mem  <size>                 Memory limit, e.g. 4g (overrides --size)
@@ -97,7 +99,11 @@ Examples:
   container-dev create claude ~/projects/scraps ~/projects/relval
   # Mounts: /workspace/scraps, /workspace/relval
 
-  # Persistent container
+  # Persistent container with multiple workspaces
+  container-dev create claude ~/work/svc ~/work/fleet --persistent --name my-stack
+  ssh claude-my-stack
+
+  # Persistent container (single workspace, name auto-derived)
   cd ~/work/important-project
   container-dev create claude --persistent
   ssh claude-importantproject
@@ -115,12 +121,14 @@ SIZE=""
 CPUS=""
 MEM=""
 SSH_PORT=""
+CUSTOM_NAME=""
 WORKSPACES=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)        usage ;;
     --persistent|-p)  PERSISTENT=true; shift ;;
+    --name)           CUSTOM_NAME="$2"; shift 2 ;;
     --size)           SIZE="$2"; shift 2 ;;
     --cpus)           CPUS="$2"; shift 2 ;;
     --mem)            MEM="$2"; shift 2 ;;
@@ -165,16 +173,23 @@ if [[ ${#WORKSPACES[@]} -gt 0 ]]; then
   IFS=$'\n' WORKSPACES=($(sort <<<"${WORKSPACES[*]}")); unset IFS
   # WORKSPACE stores comma-separated paths for state file
   WORKSPACE=$(IFS=,; echo "${WORKSPACES[*]}")
-  WORKSPACE_SLUG=$(basename "${WORKSPACES[0]}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
 else
   WORKSPACE="$(pwd)"
-  WORKSPACE_SLUG=$(basename "$WORKSPACE" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
 fi
 
 # ---------------------------------------------------------------------------
 # container naming
 # ---------------------------------------------------------------------------
 if [[ "$PERSISTENT" == true ]]; then
+  if [[ -n "$CUSTOM_NAME" ]]; then
+    WORKSPACE_SLUG=$(echo "$CUSTOM_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
+  elif [[ "$MULTI_WORKSPACE" == true ]]; then
+    # Auto-derive name from workspace basenames joined with '-'
+    AUTO_NAME=$(printf '%s\n' "${WORKSPACES[@]}" | xargs -I{} basename {} | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9\n-' | paste -sd'-')
+    WORKSPACE_SLUG="$AUTO_NAME"
+  else
+    WORKSPACE_SLUG=$(basename "$WORKSPACE" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
+  fi
   CONTAINER_NAME="${PROFILE}-${WORKSPACE_SLUG}"
   CONTAINER_TYPE="persistent"
 else
@@ -523,7 +538,13 @@ EOF
 echo "✓ Container ready"
 echo ""
 echo "  SSH:    ssh $CONTAINER_NAME"
-echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
+if [[ "$MULTI_WORKSPACE" == true ]]; then
+  for ws in "${WORKSPACES[@]}"; do
+    echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace/$(basename "$ws")"
+  done
+else
+  echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
+fi
 echo ""
 if [[ "$PERSISTENT" == false ]]; then
   echo "  Type:   Transient (will auto-replace when switching workspaces)"
