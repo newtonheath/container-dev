@@ -90,6 +90,7 @@ if [[ -n "$TRANSIENT" ]]; then
       PROFILE=$(echo "$STATE_INFO" | cut -d'|' -f5)
       [[ -z "$PROFILE" ]] && PROFILE="${container_name%-transient}"
       echo "  ssh $container_name  [$container_state]"
+      echo "  code --remote ssh-remote+$container_name /workspace"
       echo "    Profile:   $PROFILE"
       echo "    Workspace: $WORKSPACE"
       echo "    Port:      $PORT"
@@ -116,6 +117,7 @@ if [[ -n "$PERSISTENT" ]]; then
       PROFILE=$(echo "$STATE_INFO" | cut -d'|' -f5)
       [[ -z "$PROFILE" ]] && PROFILE=$(echo "$container_name" | sed 's/-[^-]*$//')
       echo "  ssh $container_name  [$container_state]"
+      echo "  code --remote ssh-remote+$container_name /workspace"
       echo "    Profile:   $PROFILE"
       echo "    Workspace: $WORKSPACE"
       echo "    Port:      $PORT"
@@ -129,10 +131,9 @@ if [[ -n "$PERSISTENT" ]]; then
 fi
 
 # Count totals
-RUNNING_COUNT=$(echo "$FILTERED" | grep -c ' running$' || echo 0)
-STOPPED_COUNT=$(echo "$FILTERED" | grep -cv ' running$' 2>/dev/null || echo 0)
-# Subtract empty trailing line from stopped count
-[[ "$STOPPED_COUNT" -gt 0 ]] && STOPPED_COUNT=$((STOPPED_COUNT - $(echo "$FILTERED" | grep -c '^$' || echo 0)))
+RUNNING_COUNT=$(echo "$FILTERED" | grep -c ' running' || echo 0)
+TOTAL_COUNT=$(echo "$FILTERED" | grep -c '[^ ]' || echo 0)
+STOPPED_COUNT=$((TOTAL_COUNT - RUNNING_COUNT))
 
 TRANSIENT_COUNT=$(echo "$TRANSIENT" | grep -c '[^ ]' || echo 0)
 PERSISTENT_COUNT=$(echo "$PERSISTENT" | grep -c '[^ ]' || echo 0)
