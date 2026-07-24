@@ -375,11 +375,10 @@ MOUNT_ARGS=()
 
 if [[ "$MULTI_WORKSPACE" == true ]]; then
   for ws in "${WORKSPACES[@]}"; do
-    ws_name=$(basename "$ws")
-    MOUNT_ARGS+=(--volume "${ws}:/workspace/${ws_name}")
+    MOUNT_ARGS+=(--volume "${ws}:/workspace/$(basename "$ws")")
   done
 else
-  MOUNT_ARGS+=(--volume "${WORKSPACE}:/workspace")
+  MOUNT_ARGS+=(--volume "${WORKSPACE}:/workspace/$(basename "$WORKSPACE")")
 fi
 
 MOUNT_ARGS+=(--volume "${KEY_FILE}.pub:/tmp/pubkey/authorized_keys:ro")
@@ -543,7 +542,7 @@ if [[ "$MULTI_WORKSPACE" == true ]]; then
     echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace/$(basename "$ws")"
   done
 else
-  echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
+  echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace/$(basename "$WORKSPACE")"
 fi
 echo ""
 if [[ "$PERSISTENT" == false ]]; then

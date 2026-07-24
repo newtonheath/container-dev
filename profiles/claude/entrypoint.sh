@@ -35,27 +35,12 @@ fi
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >> /etc/motd
 
-# Create /workspace convenience symlink(s) pointing to the real mount path(s).
-# Workspace is mounted at the host path so that tools like Claude Code see the
-# real path (not /workspace) when resolving symlinks for project directories.
-if [[ "$WORKSPACE_PATH" == *,* ]]; then
-  IFS=',' read -ra WS_PATHS <<< "$WORKSPACE_PATH"
-  for ws in "${WS_PATHS[@]}"; do
-    ln -sf "$ws" "/workspace/$(basename "$ws")"
-  done
-else
-  if [[ "$WORKSPACE_PATH" != "/workspace" ]]; then
-    rm -rf /workspace
-    ln -s "$WORKSPACE_PATH" /workspace
-  fi
-fi
-
 # Configure PS1 to show workspace
 echo "export PS1='[\u@${WORKSPACE_NAME}:\w]\\$ '" >> /root/.bashrc
 if [[ "$WORKSPACE_PATH" == *,* ]]; then
   echo 'cd /workspace' >> /root/.bashrc
 else
-  echo "cd '$WORKSPACE_PATH'" >> /root/.bashrc
+  echo "cd /workspace/${WORKSPACE_NAME}" >> /root/.bashrc
 fi
 
 # Export user-provided environment variables for SSH sessions
