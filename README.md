@@ -1,6 +1,6 @@
 # container-dev
 
-Containerized development environments for macOS using Apple's `container` CLI. Each container is an isolated Fedora 44 environment with SSH access and your repo mounted at `/workspace`.
+Containerized development environments for macOS using Apple's `container` CLI. Each container is an isolated Fedora 44 environment with SSH access and your repo mounted at `/workspace/<repo-name>`.
 
 ## Features
 
@@ -103,7 +103,7 @@ container-dev create claude ~/projects/scraps ~/projects/relval --persistent --n
 ssh claude-my-stack
 ```
 
-Each directory is mounted under `/workspace/<dirname>` inside the container.
+Each directory is mounted as `/workspace/<dirname>` inside the container (same as single-workspace containers).
 
 For persistent containers with multiple workspaces, a name is required since there's no single directory to derive one from. Pass `--name` or you'll be prompted interactively.
 
@@ -263,17 +263,17 @@ Container-dev Environments
 Transient Containers (auto-replaced on workspace change)
 ───────────────────────────────────────────────────────────────────
   ssh claude-transient  [running]
-  code --remote ssh-remote+claude-transient /workspace
-    Profile:   claude
+  code --remote ssh-remote+claude-transient /workspace/test
     Workspace: /Users/you/experiments/test
+    Profile:   claude
     Port:      2222
 
 Persistent Containers (dedicated, never auto-replaced)
 ───────────────────────────────────────────────────────────────────
   ssh claude-bigproject  [running]
-  code --remote ssh-remote+claude-bigproject /workspace
-    Profile:   claude
+  code --remote ssh-remote+claude-bigproject /workspace/bigproject
     Workspace: /Users/you/work/bigproject
+    Profile:   claude
     Port:      2223
 ```
 
@@ -319,12 +319,26 @@ container-dev create claude ~/svc ~/fleet --persistent --name my-stack
 cd ~/my-project
 container-dev create claude --persistent
 
-# Connect VS Code
-code --remote ssh-remote+claude-myproject /workspace
+# Connect VS Code (path shown in create output)
+code --remote ssh-remote+claude-myproject /workspace/my-project
 
 # Or use VS Code's "Remote-SSH: Connect to Host" command
 # and select "claude-myproject" from the list
 ```
+
+For multi-workspace containers, open one folder first, then use "Add Folder to Workspace" in VS Code to add additional repos:
+
+```bash
+# Create with multiple workspaces
+container-dev create claude ~/svc ~/fleet --persistent --name my-stack
+
+# Open the first repo
+code --remote ssh-remote+claude-my-stack /workspace/svc
+
+# Then in VS Code: File > Add Folder to Workspace > /workspace/fleet
+```
+
+**Note:** The first VS Code server download (~186MB) can take a few minutes on slow connections. Subsequent connects are instant.
 
 **Safety:** Persistent containers stay connected even when you're working elsewhere. Forgotten VS Code windows can't accidentally reconnect to the wrong workspace.
 

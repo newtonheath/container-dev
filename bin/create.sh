@@ -36,6 +36,32 @@ profile_port() {
 }
 
 # ---------------------------------------------------------------------------
+# ensure SSH config entry exists (restores it if cleaned up)
+# ---------------------------------------------------------------------------
+ensure_ssh_config() {
+  local name="$1"
+  local port
+  port=$(grep "^${name}|" "$STATE_FILE" 2>/dev/null | cut -d'|' -f3 || echo "")
+  [[ -z "$port" ]] && return
+  local key_file="$KEYS_DIR/container_ed25519"
+  local ssh_config="$HOME/.ssh/config"
+  if ! grep -q "^Host ${name}$" "$ssh_config" 2>/dev/null; then
+    mkdir -p "$HOME/.ssh"
+    cat >> "$ssh_config" <<SSHEOF
+
+Host $name
+    HostName 127.0.0.1
+    Port $port
+    User root
+    IdentityFile $key_file
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+SSHEOF
+    echo "  (SSH config entry restored)"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # detect Claude authentication method
 # ---------------------------------------------------------------------------
 detect_claude_auth() {
@@ -220,10 +246,17 @@ if [[ "$CONTAINER_STATE" == "running" ]]; then
   if [[ "$PERSISTENT" == false ]]; then
     EXISTING_WORKSPACE=$(grep "^${CONTAINER_NAME}|" "$STATE_FILE" 2>/dev/null | cut -d'|' -f2 || echo "")
     if [[ "$EXISTING_WORKSPACE" == "$WORKSPACE" ]]; then
+      ensure_ssh_config "$CONTAINER_NAME"
       echo "✓ Container '$CONTAINER_NAME' already running with this workspace"
       echo ""
       echo "  SSH:    ssh $CONTAINER_NAME"
-      echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
+      if [[ "$MULTI_WORKSPACE" == true ]]; then
+        for ws in "${WORKSPACES[@]}"; do
+          echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace/$(basename "$ws")"
+        done
+      else
+        echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace/$(basename "$WORKSPACE")"
+      fi
       exit 0
     else
       echo "Switching transient workspace:"
@@ -236,10 +269,17 @@ if [[ "$CONTAINER_STATE" == "running" ]]; then
       sed -i.bak "/^${CONTAINER_NAME}|/d" "$STATE_FILE" 2>/dev/null || true
     fi
   else
+    ensure_ssh_config "$CONTAINER_NAME"
     echo "✓ Persistent container '$CONTAINER_NAME' already running"
     echo ""
     echo "  SSH:    ssh $CONTAINER_NAME"
-    echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
+    if [[ "$MULTI_WORKSPACE" == true ]]; then
+      for ws in "${WORKSPACES[@]}"; do
+        echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace/$(basename "$ws")"
+      done
+    else
+      echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace/$(basename "$WORKSPACE")"
+    fi
     exit 0
   fi
 
@@ -258,13 +298,21 @@ elif [[ -n "$CONTAINER_STATE" ]]; then
     sed -i.bak "/^${CONTAINER_NAME}|/d" "$STATE_FILE" 2>/dev/null || true
   else
     # Same workspace (or persistent) — resume
+    ensure_ssh_config "$CONTAINER_NAME"
     echo "Resuming stopped container '$CONTAINER_NAME'..."
     container start "$CONTAINER_NAME"
     echo ""
     echo "✓ Container resumed"
     echo ""
     echo "  SSH:    ssh $CONTAINER_NAME"
-    echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace"
+    if [[ "$EXISTING_WORKSPACE" == *,* ]]; then
+      IFS=',' read -ra _EWS <<< "$EXISTING_WORKSPACE"
+      for ws in "${_EWS[@]}"; do
+        echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace/$(basename "$ws")"
+      done
+    else
+      echo "  VSCode: code --remote ssh-remote+$CONTAINER_NAME /workspace/$(basename "$EXISTING_WORKSPACE")"
+    fi
     exit 0
   fi
 fi
