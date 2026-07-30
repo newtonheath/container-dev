@@ -352,11 +352,20 @@ MEM="${MEM:-4g}"
 # ---------------------------------------------------------------------------
 # port assignment
 # ---------------------------------------------------------------------------
+# A port is unavailable if something is actively listening on it, OR if it's
+# already reserved by another container in the state file — the latter
+# catches stopped containers, which don't hold an lsof binding while paused.
+port_reserved() {
+  local port="$1"
+  lsof -i ":$port" >/dev/null 2>&1 && return 0
+  awk -F'|' -v p="$port" '$3==p {found=1} END{exit !found}' "$STATE_FILE" 2>/dev/null && return 0
+  return 1
+}
+
 if [[ -z "$SSH_PORT" ]]; then
   BASE_PORT=$(profile_port "$PROFILE")
   SSH_PORT=$BASE_PORT
-  # Find next available port if base is taken
-  while lsof -i ":$SSH_PORT" >/dev/null 2>&1; do
+  while port_reserved "$SSH_PORT"; do
     ((SSH_PORT++))
   done
   if [[ "$SSH_PORT" != "$BASE_PORT" ]]; then
