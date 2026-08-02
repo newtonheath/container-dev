@@ -10,12 +10,33 @@ echo "Container-dev Environments"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Get all containers (running + stopped), with name and state
-ALL_CONTAINERS=$(container list --all 2>/dev/null | awk 'NR>1{print $1, $5}' || true)
-
-if [[ -z "$ALL_CONTAINERS" ]]; then
-  ALL_CONTAINERS=""
+# Get all containers (running + stopped), with name and state.
+#
+# The exit status is checked separately, before piping into awk: under
+# `set -o pipefail`, a failed `container list` would still look like success
+# here because awk succeeds on empty input, making a dead/unready backend
+# indistinguishable from "zero containers exist". That distinction matters
+# because the reconciliation step below deletes state/SSH entries for any
+# container it can't see — treating a failed call as "no containers" makes it
+# wipe every persisted entry (e.g. right after a reboot, before the container
+# runtime has finished starting).
+if RAW_LIST=$(container list --all 2>&1); then
+  LIST_STATUS=0
+else
+  LIST_STATUS=$?
 fi
+
+if [[ $LIST_STATUS -ne 0 ]]; then
+  echo "ERROR: 'container list --all' failed (status $LIST_STATUS) — is the container runtime running?" >&2
+  echo "$RAW_LIST" >&2
+  echo "" >&2
+  echo "Refusing to continue: reconciling state against an unreachable backend" >&2
+  echo "would delete valid entries for containers that are actually still there." >&2
+  echo "Run 'container system start' and try again." >&2
+  exit 1
+fi
+
+ALL_CONTAINERS=$(echo "$RAW_LIST" | awk 'NR>1{print $1, $5}')
 
 # Filter to only container-dev containers
 FILTERED=""

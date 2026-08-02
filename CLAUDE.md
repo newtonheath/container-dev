@@ -368,7 +368,20 @@ CONFIG
 If containers aren't auto-replacing:
 ```bash
 cat ~/.config/container-dev/state
-# Remove stale entries manually
+```
+
+Before removing anything, confirm the container is actually gone —
+`container list --all` is the source of truth, not the state file. If it's
+still listed there, don't touch its state entry; `container-dev list` reconciles
+automatically (and, since it checks `container list --all`'s exit status
+first, won't wipe entries just because the container runtime is still
+starting up, e.g. right after a reboot).
+
+If a line really is stale, remove only that one container's line — never
+truncate or blank the whole file:
+```bash
+cp ~/.config/container-dev/state ~/.config/container-dev/state.bak
+sed -i '' '/^<exact-container-name>|/d' ~/.config/container-dev/state
 ```
 
 ### Port Conflicts
@@ -388,12 +401,22 @@ echo "FORCE_CLAUDE_AUTH=api" >> ~/.config/container-dev/config
 
 ### SSH Config Pollution
 
-Old entries can accumulate. Clean up manually:
+Transient-container entries can accumulate (they're recreated under the same
+`{profile}-transient` name, but a leftover entry from a differently-named
+run can linger). Clean up manually:
 ```bash
 # Back up first
 cp ~/.ssh/config ~/.ssh/config.bak
 
-# Remove container-dev entries
-sed -i '/^Host .*-transient$/,/^$/d' ~/.ssh/config
-sed -i '/^Host claude-/,/^$/d' ~/.ssh/config
+# Remove only *-transient entries — safe for every profile, and can't
+# touch persistent containers since their names don't end in -transient.
+sed -i '' '/^Host .*-transient$/,/^$/d' ~/.ssh/config
 ```
+
+Do **not** match on a bare profile prefix like `Host claude-` — persistent
+containers are named `{profile}-{workspace-slug}` (e.g. `claude-books`), so a
+prefix pattern deletes their entries too, silently and with no way to tell
+which container it was afterward. To remove one specific persistent
+container's entry, use `container-dev delete <container-name>` — it targets
+the exact host block and cleans up the matching state entry at the same
+time.
