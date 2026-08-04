@@ -403,8 +403,18 @@ load_env_file() {
 
       # Check if line contains '=' (KEY=VALUE format)
       if [[ "$line" =~ = ]]; then
-        # Direct KEY=VALUE, pass as-is
-        ENV_FILE_ARGS+=("-e" "$line")
+        local key="${line%%=*}"
+        local val="${line#*=}"
+        # Expand $VAR or ${VAR} references from host environment
+        if [[ "$val" =~ ^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$ ]]; then
+          local ref="${BASH_REMATCH[1]}"
+          val="${!ref:-}"
+          if [[ -z "$val" ]]; then
+            echo "   WARN: $ref not set in environment, skipping $key"
+            continue
+          fi
+        fi
+        ENV_FILE_ARGS+=("-e" "${key}=${val}")
       else
         # Just a variable name, expand from host environment
         local varname="$line"
