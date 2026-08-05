@@ -170,12 +170,12 @@ if [[ -n "$PERSISTENT" ]]; then
 fi
 
 # Count totals
-RUNNING_COUNT=$(echo "$FILTERED" | grep -c ' running' || echo 0)
-TOTAL_COUNT=$(echo "$FILTERED" | grep -c '[^ ]' || echo 0)
+RUNNING_COUNT=$(echo "$FILTERED" | grep -c ' running' || true)
+TOTAL_COUNT=$(echo "$FILTERED" | grep -c '[^ ]' || true)
 STOPPED_COUNT=$((TOTAL_COUNT - RUNNING_COUNT))
 
-TRANSIENT_COUNT=$(echo "$TRANSIENT" | grep -c '[^ ]' || echo 0)
-PERSISTENT_COUNT=$(echo "$PERSISTENT" | grep -c '[^ ]' || echo 0)
+TRANSIENT_COUNT=$(echo "$TRANSIENT" | grep -c '[^ ]' || true)
+PERSISTENT_COUNT=$(echo "$PERSISTENT" | grep -c '[^ ]' || true)
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Total: $RUNNING_COUNT running, $STOPPED_COUNT stopped ($TRANSIENT_COUNT transient, $PERSISTENT_COUNT persistent)"
