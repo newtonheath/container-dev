@@ -506,8 +506,17 @@ CONTAINER_ENV=(
 if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
   case "$CLAUDE_AUTH_TYPE" in
     vertex)
+      # Prefer the canonical Vertex settings from the machine-level env file
+      # (written by the gcloud/Vertex setup) so we don't inherit a stale
+      # ANTHROPIC_VERTEX_PROJECT_ID from the ambient shell. Falls back to the
+      # shell environment when the file is absent.
+      VERTEX_ENV_FILE="$HOME/.config/claude-code-vertex/env.sh"
+      if [[ -f "$VERTEX_ENV_FILE" ]]; then
+        # shellcheck disable=SC1090
+        source "$VERTEX_ENV_FILE"
+      fi
       CONTAINER_ENV+=(-e "ANTHROPIC_VERTEX_PROJECT_ID=${ANTHROPIC_VERTEX_PROJECT_ID:-}")
-      CONTAINER_ENV+=(-e "CLOUD_ML_REGION=${CLOUD_ML_REGION:-us-central1}")
+      CONTAINER_ENV+=(-e "CLOUD_ML_REGION=${CLOUD_ML_REGION:-global}")
       ;;
     api)
       CONTAINER_ENV+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}")

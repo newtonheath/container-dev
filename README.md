@@ -184,6 +184,30 @@ container-dev create claude
 
 The unified `claude` profile detects the gcloud ADC file and uses Vertex AI automatically.
 
+**Set your Vertex project and region.** `container-dev` reads these from
+`~/.config/claude-code-vertex/env.sh` (if present) when creating a container, so
+your project is defined in one place and never committed to this repo:
+
+```bash
+# ~/.config/claude-code-vertex/env.sh
+export CLAUDE_CODE_USE_VERTEX=1
+export CLOUD_ML_REGION=global
+export ANTHROPIC_VERTEX_PROJECT_ID=itpc-ca-YOUR-PROJECT-ID-HERE
+```
+
+If this file is absent, `container-dev` falls back to `ANTHROPIC_VERTEX_PROJECT_ID`
+and `CLOUD_ML_REGION` from your shell environment (region defaults to `global`).
+
+> **Model access is governed by your project's org policy**
+> (`constraints/vertexai.allowedModels`). If a model isn't on the allowlist you
+> get a `400 FAILED_PRECONDITION ... disallowed Gen AI model` error — this is a
+> policy/model or wrong-project problem, **not** an auth failure. The container
+> pins the models it requests in `profiles/claude/entrypoint.sh`
+> (`ANTHROPIC_DEFAULT_OPUS_MODEL` etc.); update those to models your project
+> allows. After changing project, region, or pinned models you must **rebuild the
+> image and recreate the container** (see below) — these values are baked in at
+> container creation.
+
 ### API Key (for Claude Pro users)
 
 Set your API key in the user-level env file:
