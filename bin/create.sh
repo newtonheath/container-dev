@@ -27,10 +27,6 @@ profile_port() {
     opencode-local)  echo 2231 ;;
     pi)              echo 2240 ;;
     pi-local)        echo 2241 ;;
-    # Legacy profiles (deprecated)
-    claude-vertex)   echo 2222 ;;
-    claude-pro-api)  echo 2223 ;;
-    claude-pro-web)  echo 2224 ;;
     *)               echo 2299 ;;
   esac
 }

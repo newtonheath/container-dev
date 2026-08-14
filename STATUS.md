@@ -125,8 +125,7 @@ container-dev stop claude-transient
 3. Fallback → `web` (browser OAuth)
 
 ### Profiles
-- `claude` - Unified profile with auto-detected auth (replaces 3 old profiles)
-- `claude-vertex`, `claude-pro-api`, `claude-pro-web` - Deprecated but still work
+- `claude` - Unified profile with auto-detected auth
 - Future: `opencode`, `opencode-local`, `pi`, `pi-local`
 
 ## Debug Session Context

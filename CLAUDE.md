@@ -35,11 +35,6 @@ Pause/resume uses native Apple `container` CLI directly:
 | Profile | Tool | Backend | Auth | Port Base |
 |---------|------|---------|------|-----------|
 | `claude` | Claude Code | Claude API | Auto-detected (vertex/api/web) | 2222 |
-| `claude-vertex` | Claude Code | Vertex AI | gcloud ADC (deprecated) | 2222 |
-| `claude-pro-api` | Claude Code | Claude API | API key (deprecated) | 2223 |
-| `claude-pro-web` | Claude Code | Claude API | Browser OAuth (deprecated) | 2224 |
-
-**Note:** The three old Claude profiles are deprecated. Use the unified `claude` profile instead.
 
 ### Planned Profiles (Phase 3-4)
 
@@ -191,10 +186,6 @@ profile_port() {
     opencode-local)  echo 2231 ;;
     pi)              echo 2240 ;;
     pi-local)        echo 2241 ;;
-    # Legacy (deprecated)
-    claude-vertex)   echo 2222 ;;
-    claude-pro-api)  echo 2223 ;;
-    claude-pro-web)  echo 2224 ;;
     *)               echo 2299 ;;
   esac
 }

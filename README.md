@@ -45,8 +45,6 @@ ssh claude-criticalproject  # Dedicated container, never auto-replaced
 |---------|------|---------|----------|
 | `claude` | Claude Code | Claude API | Main AI coding assistant (auth auto-detected) |
 
-Legacy profiles (`claude-vertex`, `claude-pro-api`, `claude-pro-web`) still work but are deprecated. Use the unified `claude` profile instead.
-
 ## Container Types
 
 ### Transient (Default)
@@ -365,22 +363,6 @@ code --remote ssh-remote+claude-my-stack /workspace/svc
 **Note:** The first VS Code server download (~186MB) can take a few minutes on slow connections. Subsequent connects are instant.
 
 **Safety:** Persistent containers stay connected even when you're working elsewhere. Forgotten VS Code windows can't accidentally reconnect to the wrong workspace.
-
-## Migration from Old Profiles
-
-If you were using `claude-vertex`, `claude-pro-api`, or `claude-pro-web`:
-
-1. Use the unified `claude` profile instead
-2. Auth is auto-detected (or override in `~/.config/container-dev/config`)
-3. Old profiles still work (deprecated) but will eventually be removed
-
-```bash
-# Old way (deprecated)
-container-dev create claude-vertex
-
-# New way
-container-dev create claude
-```
 
 ## Troubleshooting
 
