@@ -130,29 +130,35 @@ FORCE_CLAUDE_AUTH=vertex
 
 | Source (host) | Destination (container) | Mode |
 |---|---|---|
-| `~/.config/container-dev/claude/settings.json` | `/root/.claude/settings.json` | ro |
+| `~/.config/container-dev/claude/` (directory) | `/tmp/claude-host` | ro |
 
-Host-defined **model + effort defaults**, bind-mounted **live** onto Claude
-Code's user-settings tier. This means:
+Host-defined **model + effort defaults**. The host config **directory** is
+bind-mounted (not the file). This means:
 
-- **Live everywhere.** Editing the host file takes effect on the next `claude`
-  launch in *any* container — no recreate, no restart, no image rebuild. The
-  `entrypoint.sh` deliberately does not write `settings.json`.
-- **Host is never modified** by a container (read-only mount).
-- Seeded with defaults by `create.sh` on first run (`model`, `effortLevel`, and
-  `ANTHROPIC_DEFAULT_*_MODEL` pins). Model = `model` key (alias or full id);
-  effort = `effortLevel` key (`low`/`medium`/`high`/`xhigh`).
+- **Why a directory, not the file:** a single-file `virtiofs` bind mount is
+  pinned to the file's inode. Editors save atomically (write temp + rename =
+  new inode), which silently breaks a file-level mount — the mounted path
+  vanishes inside the container (`No such file or directory` while `mount` still
+  lists it). A directory mount is inode-stable and survives host edits.
+- **Live everywhere.** On each interactive login, `entrypoint.sh`'s `.bashrc`
+  hook copies `/tmp/claude-host/settings.json` → `/root/.claude/settings.json`
+  (writable) and exports effort. Editing the host file takes effect on the next
+  `claude` launch — no recreate, no restart, no image rebuild.
+- **Host is never modified** — the mount is read-only; the container only copies
+  *from* it.
+- Seeded with defaults by `create.sh` on first run (`model`, `effortLevel`,
+  `ANTHROPIC_DEFAULT_*_MODEL` pins).
+- **`model`** (+ `theme`, pins) come from the copied `settings.json`.
+  **`effortLevel`** is NOT reliably applied from `settings.json` (Claude Code
+  holds effort at the model default), so it is exported as
+  `CLAUDE_CODE_EFFORT_LEVEL` — the highest-precedence effort control.
 - **Per-repo override:** a `.claude/settings.local.json` at the workspace repo
-  root wins (Claude Code merges settings key-by-key at higher precedence:
-  managed > CLI flags > project `.local` > project > user). Override "only when
-  set."
-- **`model`** is read from the file by Claude Code at launch. **`effortLevel`**
-  is NOT reliably applied from a read-only settings file (Claude Code holds
-  effort at the model default), so `entrypoint.sh` exports it live as
-  `CLAUDE_CODE_EFFORT_LEVEL` (highest-precedence effort control) from the
-  mounted file in `/root/.bashrc`. Users still just set `effortLevel` here.
-- Because the base is read-only, interactive `/model` / `/effort` won't persist
-  across `claude` restarts; the host file is the durable source.
+  root can override **`model`** (Claude Code merges settings key-by-key:
+  managed > CLI flags > project `.local` > project > user). It can **not**
+  override effort, since `CLAUDE_CODE_EFFORT_LEVEL` (env) outranks all
+  `settings.json` tiers; use `claude --effort <level>` for a one-off.
+- Interactive `/model` / `/effort` don't persist across restarts (the copy is
+  refreshed from the host file each login); the host file is the durable source.
 - Auth wiring is **not** in this file — it is passed as env vars (see below).
 
 ### Auth Mounts (Claude-based profiles only)

@@ -67,23 +67,29 @@ done < <(env -0)
 
 echo 'source /root/.container_env 2>/dev/null || true' >> /root/.bashrc
 
-# Claude Code settings are provided by a live read-only bind mount at
-# /root/.claude/settings.json (host file -> user settings tier), set up by
-# create.sh. The entrypoint intentionally does NOT write settings.json:
-#   - model comes from the host file (edit it -> live on next launch)
+# Claude Code settings come from the host config DIRECTORY, bind-mounted
+# read-only at /tmp/claude-host by create.sh (a directory mount is used instead
+# of a single-file mount so host-side edits — which replace the file inode —
+# don't break the mount). We derive the container's settings from it:
+#   - model / theme / model-alias pins: copied into /root/.claude/settings.json
+#     (writable) so Claude Code reads them (and can apply per-repo
+#     settings.local.json overrides on top).
+#   - effort: Claude Code holds effort at the model default and does NOT reliably
+#     apply `effortLevel` from settings.json, so it is exported as
+#     CLAUDE_CODE_EFFORT_LEVEL (the highest-precedence effort control).
 #   - auth wiring (CLAUDE_CODE_USE_VERTEX, ANTHROPIC_VERTEX_PROJECT_ID,
-#     CLOUD_ML_REGION, ANTHROPIC_API_KEY) arrives as OS env vars from create.sh
-#   - per-repo overrides go in the workspace's .claude/settings.local.json
+#     CLOUD_ML_REGION, ANTHROPIC_API_KEY) arrives as OS env vars from create.sh.
+# Both the copy and the export run again on every interactive login, so editing
+# the host file takes effect on the next `claude` launch — no recreate needed.
 mkdir -p /root/.claude
-
-# Effort must be applied via CLAUDE_CODE_EFFORT_LEVEL, not the settings file:
-# Claude Code holds effort at the model default and does NOT reliably apply
-# `effortLevel` from a (read-only) settings.json. The env var is the highest-
-# precedence effort control. We source it live from the mounted host file at
-# each login shell, so editing the host file still takes effect on the next
-# `claude` launch (no recreate). Empty value -> no override.
+if [[ -f /tmp/claude-host/settings.json ]]; then
+  cp -f /tmp/claude-host/settings.json /root/.claude/settings.json 2>/dev/null || true
+fi
 cat >> /root/.bashrc <<'BASHRC'
-export CLAUDE_CODE_EFFORT_LEVEL="$(jq -r '.effortLevel // empty' /root/.claude/settings.json 2>/dev/null)"
+if [[ -f /tmp/claude-host/settings.json ]]; then
+  cp -f /tmp/claude-host/settings.json /root/.claude/settings.json 2>/dev/null || true
+  export CLAUDE_CODE_EFFORT_LEVEL="$(jq -r '.effortLevel // empty' /tmp/claude-host/settings.json 2>/dev/null)"
+fi
 BASHRC
 
 exec /usr/sbin/sshd -D

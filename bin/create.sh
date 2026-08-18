@@ -477,12 +477,13 @@ if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
 fi
 
 # Claude Code settings mount (host-defined model + effort defaults, LIVE)
-# The host file is the single source of truth for model + effort. It is
-# bind-mounted read-only directly onto /root/.claude/settings.json (the user
-# settings tier), so edits on the host take effect on the next `claude` launch
-# in any container — no recreate needed — and the container can never write back
-# to it. Per-repo overrides go in the workspace's .claude/settings.local.json,
-# which Claude Code merges key-by-key at higher precedence (see README).
+# The host file is the single source of truth for model + effort. We bind-mount
+# its PARENT DIRECTORY read-only at /tmp/claude-host (NOT the file directly): a
+# single-file virtiofs mount is pinned to the file's inode, so editing the host
+# file (editors save atomically = new inode) silently breaks the mount and the
+# file vanishes inside the container. A directory mount is inode-stable, so host
+# edits are picked up live. entrypoint.sh refreshes a writable copy into
+# /root/.claude/settings.json and exports effort on each login (see below).
 if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
   mkdir -p "$(dirname "$CLAUDE_SETTINGS_SRC")"
   if [[ ! -f "$CLAUDE_SETTINGS_SRC" ]]; then
@@ -499,7 +500,7 @@ if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
 }
 SETTINGS
   fi
-  MOUNT_ARGS+=(--volume "${CLAUDE_SETTINGS_SRC}:/root/.claude/settings.json:ro")
+  MOUNT_ARGS+=(--volume "$(dirname "$CLAUDE_SETTINGS_SRC"):/tmp/claude-host:ro")
 fi
 
 # Claude projects mount (for cost tracking via codeburn)

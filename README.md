@@ -254,21 +254,26 @@ you can edit freely — **no image rebuild, no container recreate required**:
 ```
 
 This file is created with sane defaults the first time you run
-`container-dev create`. It is bind-mounted **read-only, live** onto
-`/root/.claude/settings.json` (Claude Code's user-settings tier) inside every
-Claude-based container.
+`container-dev create`. Its **parent directory** is bind-mounted read-only at
+`/tmp/claude-host` inside every Claude-based container, and each interactive
+login refreshes a writable copy into `/root/.claude/settings.json` and exports
+effort from it.
 
 - **Live everywhere.** Edit the file on the host and it takes effect the next
   time you launch `claude` in *any* container — just `ssh` back in and run it.
   No recreate, no restart.
-- **Host is never modified** by a container (the mount is read-only).
-- **`model`** is read straight from this file by Claude Code at launch.
+- **Edit-safe.** We mount the *directory*, not the file. A single-file bind
+  mount is pinned to the file's inode, so saving in an editor (which writes a
+  new inode) would silently break it; a directory mount survives edits.
+- **Host is never modified** by a container (the mount is read-only; the
+  container only ever copies *from* it).
+- **`model`** (and `theme`, the model-alias pins) come from the copied
+  `settings.json`.
 - **`effortLevel`** is applied a different way: Claude Code holds effort at the
-  model default and won't reliably apply `effortLevel` from a read-only
-  settings file. So the container's login shell exports it as
-  `CLAUDE_CODE_EFFORT_LEVEL` (the highest-precedence effort control), sourced
-  *live* from this same file. You still just set `effortLevel` here — it works
-  live all the same.
+  model default and won't reliably apply `effortLevel` from `settings.json`. So
+  the login shell exports it as `CLAUDE_CODE_EFFORT_LEVEL` (the highest-
+  precedence effort control), sourced live from the mounted file. You still just
+  set `effortLevel` here — it works live all the same.
 - Auth wiring is separate and automatic — passed as environment variables based
   on `CLAUDE_AUTH_TYPE`, not stored in this file.
 
@@ -281,16 +286,21 @@ you want to change:
 
 ```jsonc
 // <repo>/.claude/settings.local.json   (add to the repo's .gitignore)
-{ "model": "opus", "effortLevel": "xhigh" }
+{ "model": "opus" }
 ```
 
-With the above, that repo uses `opus`/`xhigh` while `theme` and the model pins
-still come from the host file. Remove the keys (or the file) and the host
-defaults apply again — the override wins "only when set."
+With the above, that repo uses `opus` while `theme` and the model pins still
+come from the host file. Remove the key (or the file) and the host default
+applies again — the override wins "only when set."
 
-> **Note:** because the host file is mounted read-only, the *interactive*
-> `/model` and `/effort` commands (which try to save to the user-settings file)
-> won't persist across `claude` restarts. The host-file defaults above are the
+> **Effort caveat:** per-repo `effortLevel` in `settings.local.json` does **not**
+> take effect, because effort is applied via the `CLAUDE_CODE_EFFORT_LEVEL`
+> environment variable, which outranks every `settings.json` tier. To change
+> effort for a single run, use `claude --effort <level>`.
+
+> **Note:** because the container's `settings.json` is refreshed from the host
+> file on each login, the *interactive* `/model` and `/effort` commands won't
+> persist across `claude` restarts. The host-file defaults above are the
 > durable way to set model/effort; for a one-off change use
 > `.claude/settings.local.json` or the `claude --model <m> --effort <level>`
 > launch flags.
