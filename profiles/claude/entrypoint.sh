@@ -67,54 +67,23 @@ done < <(env -0)
 
 echo 'source /root/.container_env 2>/dev/null || true' >> /root/.bashrc
 
-# Configure Claude Code settings based on auth type
+# Claude Code settings are provided by a live read-only bind mount at
+# /root/.claude/settings.json (host file -> user settings tier), set up by
+# create.sh. The entrypoint intentionally does NOT write settings.json:
+#   - model comes from the host file (edit it -> live on next launch)
+#   - auth wiring (CLAUDE_CODE_USE_VERTEX, ANTHROPIC_VERTEX_PROJECT_ID,
+#     CLOUD_ML_REGION, ANTHROPIC_API_KEY) arrives as OS env vars from create.sh
+#   - per-repo overrides go in the workspace's .claude/settings.local.json
 mkdir -p /root/.claude
-case "${CLAUDE_AUTH_TYPE}" in
-  vertex)
-    cat > /root/.claude/settings.json <<SETTINGS
-{
-  "theme": "dark",
-  "env": {
-    "CLAUDE_CODE_USE_VERTEX": "1",
-    "ANTHROPIC_VERTEX_PROJECT_ID": "${ANTHROPIC_VERTEX_PROJECT_ID:-}",
-    "CLOUD_ML_REGION": "${CLOUD_ML_REGION:-global}",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-8",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5@20251001"
-  }
-}
-SETTINGS
-    ;;
-  api)
-    cat > /root/.claude/settings.json <<SETTINGS
-{
-  "theme": "dark",
-  "model": "claude-sonnet-4-6",
-  "env": {
-    "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY:-}"
-  }
-}
-SETTINGS
-    ;;
-  web)
-    # OAuth - settings.json created by Claude Code after browser auth
-    # Just ensure directory exists; persistent mount handles token
-    cat > /root/.claude/settings.json <<SETTINGS
-{
-  "theme": "dark",
-  "model": "claude-sonnet-4-6"
-}
-SETTINGS
-    ;;
-  *)
-    # Fallback - let Claude Code configure itself
-    cat > /root/.claude/settings.json <<SETTINGS
-{
-  "theme": "dark",
-  "model": "claude-sonnet-4-6"
-}
-SETTINGS
-    ;;
-esac
+
+# Effort must be applied via CLAUDE_CODE_EFFORT_LEVEL, not the settings file:
+# Claude Code holds effort at the model default and does NOT reliably apply
+# `effortLevel` from a (read-only) settings.json. The env var is the highest-
+# precedence effort control. We source it live from the mounted host file at
+# each login shell, so editing the host file still takes effect on the next
+# `claude` launch (no recreate). Empty value -> no override.
+cat >> /root/.bashrc <<'BASHRC'
+export CLAUDE_CODE_EFFORT_LEVEL="$(jq -r '.effortLevel // empty' /root/.claude/settings.json 2>/dev/null)"
+BASHRC
 
 exec /usr/sbin/sshd -D

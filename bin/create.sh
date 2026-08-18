@@ -16,6 +16,7 @@ CONFIG_DIR="$HOME/.config/container-dev"
 KEYS_DIR="$CONFIG_DIR/keys"
 STATE_FILE="$CONFIG_DIR/state"
 CONFIG_FILE="$CONFIG_DIR/config"
+CLAUDE_SETTINGS_SRC="$CONFIG_DIR/claude/settings.json"
 
 # ---------------------------------------------------------------------------
 # per-profile base port map
@@ -475,6 +476,32 @@ if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
   esac
 fi
 
+# Claude Code settings mount (host-defined model + effort defaults, LIVE)
+# The host file is the single source of truth for model + effort. It is
+# bind-mounted read-only directly onto /root/.claude/settings.json (the user
+# settings tier), so edits on the host take effect on the next `claude` launch
+# in any container — no recreate needed — and the container can never write back
+# to it. Per-repo overrides go in the workspace's .claude/settings.local.json,
+# which Claude Code merges key-by-key at higher precedence (see README).
+if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
+  mkdir -p "$(dirname "$CLAUDE_SETTINGS_SRC")"
+  if [[ ! -f "$CLAUDE_SETTINGS_SRC" ]]; then
+    cat > "$CLAUDE_SETTINGS_SRC" <<'SETTINGS'
+{
+  "theme": "dark",
+  "model": "sonnet",
+  "effortLevel": "high",
+  "env": {
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-8",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5@20251001"
+  }
+}
+SETTINGS
+  fi
+  MOUNT_ARGS+=(--volume "${CLAUDE_SETTINGS_SRC}:/root/.claude/settings.json:ro")
+fi
+
 # Claude projects mount (for cost tracking via codeburn)
 if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
   CLAUDE_PROJECTS_DIR="$HOME/.claude/projects"
@@ -511,6 +538,9 @@ if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
         # shellcheck disable=SC1090
         source "$VERTEX_ENV_FILE"
       fi
+      # CLAUDE_CODE_USE_VERTEX is a Claude Code built-in flag; it is derived
+      # from CLAUDE_AUTH_TYPE=vertex here rather than being a user-facing knob.
+      CONTAINER_ENV+=(-e "CLAUDE_CODE_USE_VERTEX=1")
       CONTAINER_ENV+=(-e "ANTHROPIC_VERTEX_PROJECT_ID=${ANTHROPIC_VERTEX_PROJECT_ID:-}")
       CONTAINER_ENV+=(-e "CLOUD_ML_REGION=${CLOUD_ML_REGION:-global}")
       ;;

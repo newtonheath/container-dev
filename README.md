@@ -199,12 +199,13 @@ and `CLOUD_ML_REGION` from your shell environment (region defaults to `global`).
 > **Model access is governed by your project's org policy**
 > (`constraints/vertexai.allowedModels`). If a model isn't on the allowlist you
 > get a `400 FAILED_PRECONDITION ... disallowed Gen AI model` error — this is a
-> policy/model or wrong-project problem, **not** an auth failure. The container
-> pins the models it requests in `profiles/claude/entrypoint.sh`
-> (`ANTHROPIC_DEFAULT_OPUS_MODEL` etc.); update those to models your project
-> allows. After changing project, region, or pinned models you must **rebuild the
-> image and recreate the container** (see below) — these values are baked in at
-> container creation.
+> policy/model or wrong-project problem, **not** an auth failure. The models the
+> container requests are defined in the host-level settings file
+> `~/.config/container-dev/claude/settings.json` (`model`, `effortLevel`, and the
+> `ANTHROPIC_DEFAULT_OPUS_MODEL` etc. pins); update those to models your project
+> allows. **No image rebuild or recreate is needed** — edit the file and it
+> applies live on the next `claude` launch in any container. See
+> [Model & effort configuration](#model--effort-configuration) below.
 
 ### API Key (for Claude Pro users)
 
@@ -232,6 +233,67 @@ Edit `~/.config/container-dev/config`:
 ```bash
 FORCE_CLAUDE_AUTH=vertex  # or: api, web
 ```
+
+### Model & effort configuration
+
+The default model and reasoning effort live in a host-level settings file that
+you can edit freely — **no image rebuild, no container recreate required**:
+
+```bash
+# ~/.config/container-dev/claude/settings.json
+{
+  "theme": "dark",
+  "model": "sonnet",          # alias (opus/sonnet/haiku) or full model id
+  "effortLevel": "high",      # low | medium | high | xhigh
+  "env": {
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-8",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-6",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5@20251001"
+  }
+}
+```
+
+This file is created with sane defaults the first time you run
+`container-dev create`. It is bind-mounted **read-only, live** onto
+`/root/.claude/settings.json` (Claude Code's user-settings tier) inside every
+Claude-based container.
+
+- **Live everywhere.** Edit the file on the host and it takes effect the next
+  time you launch `claude` in *any* container — just `ssh` back in and run it.
+  No recreate, no restart.
+- **Host is never modified** by a container (the mount is read-only).
+- **`model`** is read straight from this file by Claude Code at launch.
+- **`effortLevel`** is applied a different way: Claude Code holds effort at the
+  model default and won't reliably apply `effortLevel` from a read-only
+  settings file. So the container's login shell exports it as
+  `CLAUDE_CODE_EFFORT_LEVEL` (the highest-precedence effort control), sourced
+  *live* from this same file. You still just set `effortLevel` here — it works
+  live all the same.
+- Auth wiring is separate and automatic — passed as environment variables based
+  on `CLAUDE_AUTH_TYPE`, not stored in this file.
+
+#### Per-repo overrides
+
+To override the host defaults for a single project, add a
+`.claude/settings.local.json` at the repo root in your workspace. Claude Code
+**merges settings key-by-key** at higher precedence, so you only specify what
+you want to change:
+
+```jsonc
+// <repo>/.claude/settings.local.json   (add to the repo's .gitignore)
+{ "model": "opus", "effortLevel": "xhigh" }
+```
+
+With the above, that repo uses `opus`/`xhigh` while `theme` and the model pins
+still come from the host file. Remove the keys (or the file) and the host
+defaults apply again — the override wins "only when set."
+
+> **Note:** because the host file is mounted read-only, the *interactive*
+> `/model` and `/effort` commands (which try to save to the user-settings file)
+> won't persist across `claude` restarts. The host-file defaults above are the
+> durable way to set model/effort; for a one-off change use
+> `.claude/settings.local.json` or the `claude --model <m> --effort <level>`
+> launch flags.
 
 ## Commands
 

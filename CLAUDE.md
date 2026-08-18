@@ -126,6 +126,35 @@ FORCE_CLAUDE_AUTH=vertex
 | `{workspace}` | `/workspace` | rw |
 | `~/.config/container-dev/keys/container_ed25519.pub` | `/tmp/pubkey/authorized_keys` | ro |
 
+### Claude Code Settings Mount (Claude-based profiles only)
+
+| Source (host) | Destination (container) | Mode |
+|---|---|---|
+| `~/.config/container-dev/claude/settings.json` | `/root/.claude/settings.json` | ro |
+
+Host-defined **model + effort defaults**, bind-mounted **live** onto Claude
+Code's user-settings tier. This means:
+
+- **Live everywhere.** Editing the host file takes effect on the next `claude`
+  launch in *any* container — no recreate, no restart, no image rebuild. The
+  `entrypoint.sh` deliberately does not write `settings.json`.
+- **Host is never modified** by a container (read-only mount).
+- Seeded with defaults by `create.sh` on first run (`model`, `effortLevel`, and
+  `ANTHROPIC_DEFAULT_*_MODEL` pins). Model = `model` key (alias or full id);
+  effort = `effortLevel` key (`low`/`medium`/`high`/`xhigh`).
+- **Per-repo override:** a `.claude/settings.local.json` at the workspace repo
+  root wins (Claude Code merges settings key-by-key at higher precedence:
+  managed > CLI flags > project `.local` > project > user). Override "only when
+  set."
+- **`model`** is read from the file by Claude Code at launch. **`effortLevel`**
+  is NOT reliably applied from a read-only settings file (Claude Code holds
+  effort at the model default), so `entrypoint.sh` exports it live as
+  `CLAUDE_CODE_EFFORT_LEVEL` (highest-precedence effort control) from the
+  mounted file in `/root/.bashrc`. Users still just set `effortLevel` here.
+- Because the base is read-only, interactive `/model` / `/effort` won't persist
+  across `claude` restarts; the host file is the durable source.
+- Auth wiring is **not** in this file — it is passed as env vars (see below).
+
 ### Auth Mounts (Claude-based profiles only)
 
 Conditional based on detected auth type (see above).
@@ -204,7 +233,24 @@ CLAUDE_AUTH_TYPE=vertex
 These are used by `entrypoint.sh` to:
 - Write MOTD with workspace info
 - Configure PS1 prompt
-- Generate tool-specific config
+- (Claude Code settings come from a live read-only mount, not the entrypoint — see above)
+
+### Auth Env Vars (derived from `CLAUDE_AUTH_TYPE`)
+
+`CLAUDE_AUTH_TYPE` is the single user-facing auth control (`vertex`/`api`/`web`,
+auto-detected or forced via `FORCE_CLAUDE_AUTH`). `create.sh` translates it into
+the Claude Code built-in env vars the container actually needs — these are
+**not** stored in `settings.json`:
+
+```bash
+# CLAUDE_AUTH_TYPE=vertex →
+CLAUDE_CODE_USE_VERTEX=1        # derived internal flag, not a user knob
+ANTHROPIC_VERTEX_PROJECT_ID=... # from ~/.config/claude-code-vertex/env.sh or shell
+CLOUD_ML_REGION=global
+
+# CLAUDE_AUTH_TYPE=api →
+ANTHROPIC_API_KEY=sk-ant-...
+```
 
 ## Adding a New Profile
 
