@@ -81,13 +81,18 @@ echo 'source /root/.container_env 2>/dev/null || true' >> /root/.bashrc
 #     CLOUD_ML_REGION, ANTHROPIC_API_KEY) arrives as OS env vars from create.sh.
 # Both the copy and the export run again on every interactive login, so editing
 # the host file takes effect on the next `claude` launch — no recreate needed.
+#
+# NOTE: use `cat >dest`, not `cp`. The base /root/.bashrc aliases `cp` to
+# `cp -i`, so a `cp` in the login hook becomes an interactive prompt that reads
+# from the TTY and hangs the SSH login until the user presses Enter. `cat` takes
+# no stdin (it reads the file argument) and ignores aliases.
 mkdir -p /root/.claude
 if [[ -f /tmp/claude-host/settings.json ]]; then
-  cp -f /tmp/claude-host/settings.json /root/.claude/settings.json 2>/dev/null || true
+  cat /tmp/claude-host/settings.json > /root/.claude/settings.json 2>/dev/null || true
 fi
 cat >> /root/.bashrc <<'BASHRC'
 if [[ -f /tmp/claude-host/settings.json ]]; then
-  cp -f /tmp/claude-host/settings.json /root/.claude/settings.json 2>/dev/null || true
+  cat /tmp/claude-host/settings.json > /root/.claude/settings.json 2>/dev/null || true
   export CLAUDE_CODE_EFFORT_LEVEL="$(jq -r '.effortLevel // empty' /tmp/claude-host/settings.json 2>/dev/null)"
 fi
 BASHRC
