@@ -53,9 +53,14 @@ EOF
 # Export ALL environment variables except system/container internals
 # This captures everything from ~/.config/container-dev/env and profile .env files
 while IFS='=' read -r -d '' var value; do
-  # Skip internal variables set by container runtime and start.sh
+  # Skip internal variables set by container runtime and start.sh.
+  # NOTE: auth vars (CLAUDE_AUTH_TYPE, ANTHROPIC_VERTEX_PROJECT_ID,
+  # CLOUD_ML_REGION, ANTHROPIC_API_KEY) are intentionally NOT skipped — sshd
+  # scrubs the container-run environment, so interactive login shells (and
+  # `claude` launched from them) only see what we persist here. Without these,
+  # Vertex is enabled with no project ID and auth silently fails.
   case "$var" in
-    WORKSPACE_PATH|CONTAINER_NAME|CLAUDE_AUTH_TYPE|ANTHROPIC_VERTEX_PROJECT_ID|CLOUD_ML_REGION|ANTHROPIC_API_KEY)
+    WORKSPACE_PATH|CONTAINER_NAME)
       continue ;;
     HOME|PATH|PWD|SHLVL|TERM|HOSTNAME|_)
       continue ;;
