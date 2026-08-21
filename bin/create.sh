@@ -96,7 +96,7 @@ Usage: container-dev create <profile> [dirs...] [--persistent] [options]
 Creates a new container or resumes a stopped one.
 
 Arguments:
-  profile     Profile name: claude, opencode, opencode-local, pi, pi-local
+  profile     Profile name: claude, cline
   dirs        Optional directories to mount (default: current directory)
               Each is mounted as /workspace/<dirname> in the container
 
@@ -107,6 +107,10 @@ Flags:
 Options:
   --name <slug>                 Container name suffix (auto-derived from workspace directory names
                                 if not provided)
+  --config <name>               Named Cline config (cline profile only). Reads config from
+                                ~/.config/container-dev/cline/<name>/ and names the container
+                                cline-<name>-* so different providers are distinguishable in lists.
+                                Without this flag the flat ~/.config/container-dev/cline/ is used.
   --size <small|medium|large>   Resource preset (default: medium)
   --cpus <n>                    CPU cores (overrides --size)
   --mem  <size>                 Memory limit, e.g. 4g (overrides --size)
@@ -118,6 +122,10 @@ Examples:
   cd ~/experiments/test
   container-dev create claude
   ssh claude-transient
+
+  # Cline with a named config (provider visible in container name and list)
+  container-dev create cline --config claude     # → cline-claude-transient
+  container-dev create cline --config mini4      # → cline-mini4-transient
 
   # Multiple workspaces (each mounted under /workspace/<name>)
   container-dev create claude ~/projects/scraps ~/projects/relval
@@ -146,6 +154,7 @@ CPUS=""
 MEM=""
 SSH_PORT=""
 CUSTOM_NAME=""
+CLINE_CONFIG=""
 WORKSPACES=()
 
 while [[ $# -gt 0 ]]; do
@@ -157,6 +166,7 @@ while [[ $# -gt 0 ]]; do
     --cpus)           CPUS="$2"; shift 2 ;;
     --mem)            MEM="$2"; shift 2 ;;
     --port)           SSH_PORT="$2"; shift 2 ;;
+    --config)         CLINE_CONFIG="$2"; shift 2 ;;
     -*)
       echo "ERROR: unknown option '$1'" >&2
       usage
@@ -204,6 +214,15 @@ fi
 # ---------------------------------------------------------------------------
 # container naming
 # ---------------------------------------------------------------------------
+
+# For cline with --config <name>, the name prefix becomes "cline-<name>"
+# so containers are self-describing: cline-claude-transient, cline-mini4-myproject.
+# IMAGE_NAME stays cline-img (same Dockerfile regardless of config).
+NAME_PREFIX="$PROFILE"
+if [[ "$PROFILE" == "cline" && -n "$CLINE_CONFIG" ]]; then
+  NAME_PREFIX="cline-${CLINE_CONFIG}"
+fi
+
 if [[ "$PERSISTENT" == true ]]; then
   if [[ -n "$CUSTOM_NAME" ]]; then
     WORKSPACE_SLUG=$(echo "$CUSTOM_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
@@ -214,10 +233,10 @@ if [[ "$PERSISTENT" == true ]]; then
   else
     WORKSPACE_SLUG=$(basename "$WORKSPACE" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')
   fi
-  CONTAINER_NAME="${PROFILE}-${WORKSPACE_SLUG}"
+  CONTAINER_NAME="${NAME_PREFIX}-${WORKSPACE_SLUG}"
   CONTAINER_TYPE="persistent"
 else
-  CONTAINER_NAME="${PROFILE}-transient"
+  CONTAINER_NAME="${NAME_PREFIX}-transient"
   CONTAINER_TYPE="transient"
 fi
 
@@ -335,7 +354,13 @@ fi
 # ---------------------------------------------------------------------------
 CLINE_PROVIDER="none"
 if [[ "$PROFILE" == "cline" ]]; then
-  CLINE_HOST_DIR="$CONFIG_DIR/cline"
+  # --config <name> uses ~/.config/container-dev/cline/<name>/ as config dir
+  # No --config flag uses the flat ~/.config/container-dev/cline/ (default)
+  if [[ -n "$CLINE_CONFIG" ]]; then
+    CLINE_HOST_DIR="$CONFIG_DIR/cline/$CLINE_CONFIG"
+  else
+    CLINE_HOST_DIR="$CONFIG_DIR/cline"
+  fi
   mkdir -p "$CLINE_HOST_DIR"
   CLINE_PROVIDER_FILE="$CLINE_HOST_DIR/provider"
   if [[ -f "$CLINE_PROVIDER_FILE" ]]; then
@@ -343,7 +368,7 @@ if [[ "$PROFILE" == "cline" ]]; then
   else
     CLINE_PROVIDER="anthropic"
     echo "anthropic" > "$CLINE_PROVIDER_FILE"
-    echo "Defaulting Cline provider to: anthropic (saved to config)"
+    echo "Defaulting Cline provider to: anthropic (saved to $CLINE_HOST_DIR/provider)"
   fi
 fi
 
@@ -535,6 +560,7 @@ fi
 # A directory mount is used (not a single-file mount) for inode stability.
 if [[ "$PROFILE" == "cline" ]]; then
   MOUNT_ARGS+=(--volume "${CLINE_HOST_DIR}:/tmp/cline-host:ro")
+
 fi
 
 # Model mounts (local profiles)
@@ -581,11 +607,13 @@ fi
 # Auth env vars for Cline profile
 if [[ "$PROFILE" == "cline" ]]; then
   CONTAINER_ENV+=(-e "CLINE_PROVIDER=$CLINE_PROVIDER")
-  if [[ "$CLINE_PROVIDER" == "anthropic" ]]; then
-    CONTAINER_ENV+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}")
-  fi
-  # openai-compat: no auth env var needed; credentials come from the mounted
-  # openai.json config file which entrypoint.sh reads at login time.
+  case "$CLINE_PROVIDER" in
+    anthropic)
+      CONTAINER_ENV+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}")
+      ;;
+    # openai-compat (mini4 etc): no auth env var needed; URL and model come
+    # from the mounted openai.json which entrypoint.sh reads at login time.
+  esac
 fi
 
 # ---------------------------------------------------------------------------
@@ -629,7 +657,11 @@ if [[ "$CLAUDE_AUTH_TYPE" != "none" ]]; then
   echo "   Auth:      Claude ($CLAUDE_AUTH_TYPE)"
 fi
 if [[ "$CLINE_PROVIDER" != "none" ]]; then
-  echo "   Provider:  Cline ($CLINE_PROVIDER)"
+  if [[ -n "$CLINE_CONFIG" ]]; then
+    echo "   Provider:  Cline ($CLINE_CONFIG / $CLINE_PROVIDER)"
+  else
+    echo "   Provider:  Cline ($CLINE_PROVIDER)"
+  fi
 fi
 echo ""
 

@@ -442,14 +442,14 @@ code --remote ssh-remote+claude-my-stack /workspace/svc
 
 The `cline` profile installs [Cline](https://cline.bot) inside a container — no Node.js on your host machine required. It supports two providers:
 
-- **Anthropic API** — standard API key, same as Claude Code
+- **Anthropic API** — requires a direct `sk-ant-...` key from [console.anthropic.com](https://console.anthropic.com) (Vertex AI is not supported by Cline)
 - **LAN OpenAI-compatible server** — point at a local llama.cpp, Ollama, or similar server
 
 The Cline CLI and VS Code remote extension (`saoudrizwan.claude-dev`) share the same config inside the container, so configuring one configures both.
 
 ### Prerequisites
 
-**For Anthropic API:** ensure `ANTHROPIC_API_KEY` is set in your environment or `~/.config/container-dev/env`.
+**For Anthropic API key:** ensure `ANTHROPIC_API_KEY` is set in your environment or `~/.config/container-dev/env`. Note: Cline requires a direct Anthropic API key — Vertex AI credentials cannot be used here.
 
 **For a LAN model server:**
 - The server must listen on `0.0.0.0` (not just `127.0.0.1`). For llama.cpp: `llama-server --host 0.0.0.0 --port 8080 --model your-model.gguf`
@@ -460,17 +460,21 @@ The Cline CLI and VS Code remote extension (`saoudrizwan.claude-dev`) share the 
 
 ### Setup
 
-Create the host config directory and files **before** creating the container:
+Create the host config directory and files **before** creating the container. Use `--config <name>` to keep configs for different providers separate:
 
 ```bash
-mkdir -p ~/.config/container-dev/cline
+# --- Anthropic API key ---
+mkdir -p ~/.config/container-dev/cline/anthropic
+echo "anthropic" > ~/.config/container-dev/cline/anthropic/provider
+# ANTHROPIC_API_KEY must be in ~/.config/container-dev/env or your shell environment
 
-# For Anthropic API (default):
-echo "anthropic" > ~/.config/container-dev/cline/provider
+container-dev create cline --config anthropic --persistent
+# → container named cline-anthropic-<workspace>
 
-# For a LAN model server:
-echo "mini4" > ~/.config/container-dev/cline/provider   # any name you like
-cat > ~/.config/container-dev/cline/openai.json <<'EOF'
+# --- LAN model server ---
+mkdir -p ~/.config/container-dev/cline/mini4
+echo "mini4" > ~/.config/container-dev/cline/mini4/provider   # any name you like
+cat > ~/.config/container-dev/cline/mini4/openai.json <<'EOF'
 {
   "baseUrl": "http://192.168.3.120:8080/v1",
   "modelId": "your-model-id",
@@ -478,6 +482,9 @@ cat > ~/.config/container-dev/cline/openai.json <<'EOF'
   "supportsImages": false
 }
 EOF
+
+container-dev create cline --config mini4 --persistent
+# → container named cline-mini4-<workspace>
 ```
 
 > **Use the IP address, not the hostname.** `.local` mDNS does not resolve inside the container. Get the IP with `dns-sd -G v4 yourserver.local` and put that in `baseUrl`.
@@ -487,10 +494,18 @@ EOF
 Then create the container:
 
 ```bash
+# Without --config (flat layout, container named cline-transient)
 container-dev create cline
 ssh cline-transient
+
+# With --config <name> (named layout, container includes the config name)
+container-dev create cline --config mini4      # → cline-mini4-transient
+container-dev create cline --config anthropic  # → cline-anthropic-transient
+
 cline "say hello"
 ```
+
+Using `--config` is recommended when you want multiple Cline containers running simultaneously (e.g. one for Anthropic, one for your LAN model) — `container-dev list` will show `cline-anthropic-transient` and `cline-mini4-transient` as distinct entries.
 
 ### Config seeding
 
@@ -505,14 +520,24 @@ On each SSH login, `~/.cline/data/globalState.json` and `secrets.json` are autom
 The `provider` file sets the **default** active provider at login. Both providers are pre-configured in the container, so the VS Code extension's provider picker lets you switch mid-session without re-logging in. A re-login resets to whatever the `provider` file says.
 
 ```bash
-# Switch default to LAN server
+# Switch default to LAN server (flat layout)
 echo "mini4" > ~/.config/container-dev/cline/provider
+ssh cline-transient   # reseeds on login
 
 # Switch back to Anthropic
 echo "anthropic" > ~/.config/container-dev/cline/provider
-
-# Then re-login to apply
 ssh cline-transient
+```
+
+For running both providers simultaneously, use named configs instead of switching:
+
+```bash
+# ~/.config/container-dev/cline/anthropic/provider → "anthropic"
+# ~/.config/container-dev/cline/mini4/provider     → "mini4"
+
+container-dev create cline --config anthropic --persistent
+container-dev create cline --config mini4     --persistent
+# Both run at once on different ports; container-dev list shows both clearly
 ```
 
 ### VS Code integration
