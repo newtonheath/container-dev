@@ -28,6 +28,7 @@ profile_port() {
     opencode-local)  echo 2231 ;;
     pi)              echo 2240 ;;
     pi-local)        echo 2241 ;;
+    cline)           echo 2260 ;;
     *)               echo 2299 ;;
   esac
 }
@@ -330,6 +331,23 @@ if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# detect provider for Cline profile
+# ---------------------------------------------------------------------------
+CLINE_PROVIDER="none"
+if [[ "$PROFILE" == "cline" ]]; then
+  CLINE_HOST_DIR="$CONFIG_DIR/cline"
+  mkdir -p "$CLINE_HOST_DIR"
+  CLINE_PROVIDER_FILE="$CLINE_HOST_DIR/provider"
+  if [[ -f "$CLINE_PROVIDER_FILE" ]]; then
+    CLINE_PROVIDER=$(cat "$CLINE_PROVIDER_FILE")
+  else
+    CLINE_PROVIDER="anthropic"
+    echo "anthropic" > "$CLINE_PROVIDER_FILE"
+    echo "Defaulting Cline provider to: anthropic (saved to config)"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # resource limits
 # ---------------------------------------------------------------------------
 if [[ -n "$SIZE" ]]; then
@@ -510,6 +528,15 @@ if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
   MOUNT_ARGS+=(--volume "${CLAUDE_PROJECTS_DIR}:/root/.claude/projects")
 fi
 
+# Cline config mount (host-defined provider + credentials, LIVE)
+# The host directory is bind-mounted read-only at /tmp/cline-host. On each
+# interactive login entrypoint.sh re-seeds ~/.cline/data/ from it, so host
+# edits take effect on the next cline launch without recreating the container.
+# A directory mount is used (not a single-file mount) for inode stability.
+if [[ "$PROFILE" == "cline" ]]; then
+  MOUNT_ARGS+=(--volume "${CLINE_HOST_DIR}:/tmp/cline-host:ro")
+fi
+
 # Model mounts (local profiles)
 if [[ "$PROFILE" =~ -local$ ]]; then
   MODEL_DIR="$CONFIG_DIR/models"
@@ -551,6 +578,16 @@ if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
   esac
 fi
 
+# Auth env vars for Cline profile
+if [[ "$PROFILE" == "cline" ]]; then
+  CONTAINER_ENV+=(-e "CLINE_PROVIDER=$CLINE_PROVIDER")
+  if [[ "$CLINE_PROVIDER" == "anthropic" ]]; then
+    CONTAINER_ENV+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}")
+  fi
+  # openai-compat: no auth env var needed; credentials come from the mounted
+  # openai.json config file which entrypoint.sh reads at login time.
+fi
+
 # ---------------------------------------------------------------------------
 # find Dockerfile
 # ---------------------------------------------------------------------------
@@ -590,6 +627,9 @@ echo "   Resources: cpus=$CPUS mem=$MEM"
 echo "   SSH port:  $SSH_PORT"
 if [[ "$CLAUDE_AUTH_TYPE" != "none" ]]; then
   echo "   Auth:      Claude ($CLAUDE_AUTH_TYPE)"
+fi
+if [[ "$CLINE_PROVIDER" != "none" ]]; then
+  echo "   Provider:  Cline ($CLINE_PROVIDER)"
 fi
 echo ""
 

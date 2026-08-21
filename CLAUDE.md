@@ -35,6 +35,7 @@ Pause/resume uses native Apple `container` CLI directly:
 | Profile | Tool | Backend | Auth | Port Base |
 |---------|------|---------|------|-----------|
 | `claude` | Claude Code | Claude API | Auto-detected (vertex/api/web) | 2222 |
+| `cline` | Cline | Anthropic API or OpenAI-compat | API key (`anthropic`) or endpoint URL (`mini4` or any named LAN server) | 2260 |
 
 ### Planned Profiles (Phase 3-4)
 
@@ -221,6 +222,7 @@ profile_port() {
     opencode-local)  echo 2231 ;;
     pi)              echo 2240 ;;
     pi-local)        echo 2241 ;;
+    cline)           echo 2260 ;;
     *)               echo 2299 ;;
   esac
 }
@@ -389,6 +391,12 @@ CONFIG
 - [x] Unified `claude` profile
 - [x] Machine-level config file
 - [x] Backward compatibility (old profiles still work)
+
+### Phase 2b: Cline Profile ✅
+- [x] `profiles/cline/` - Cline CLI + VS Code remote extension
+- [x] Multi-provider config seeding (Anthropic API key + OpenAI-compat)
+- [x] Host config directory mount (`~/.config/container-dev/cline/`)
+- [x] Live re-seed on each login (no recreate needed for config changes)
 
 ### Phase 3: Opencode Profiles 🚧
 - [ ] `profiles/opencode/` - Opencode with Claude
