@@ -5,10 +5,11 @@ Containerized development environments for macOS using Apple's `container` CLI. 
 ## Features
 
 - **Claude Code in a container**: Isolated coding assistant with auto-detected auth (Vertex AI, API key, or browser OAuth)
+- **Cline in a container**: Cline CLI + VS Code extension, no Node.js on your host — supports Anthropic API or any LAN OpenAI-compatible server
 - **Transient by default**: Drop-in/drop-out workspace switching with auto-cleanup
 - **Persistent opt-in**: Long-lived containers for important projects
 - **Multiple workspaces**: Mount several directories into a single container
-- **Machine-level auth**: Configure Claude authentication once per machine
+- **Machine-level auth**: Configure authentication once per machine, auto-detected on create
 - **Simple command interface**: `container-dev create/delete/list`
 
 ## Installation
@@ -41,9 +42,10 @@ ssh claude-criticalproject  # Dedicated container, never auto-replaced
 
 ## Profiles
 
-| Profile | Tool | Backend | Use Case |
-|---------|------|---------|----------|
-| `claude` | Claude Code | Claude API | Main AI coding assistant (auth auto-detected) |
+| Profile | Tool | Backend | Port | Use Case |
+|---------|------|---------|------|----------|
+| `claude` | Claude Code | Claude API | 2222 | Main AI coding assistant (auth auto-detected) |
+| `cline` | Cline | Anthropic API or LAN OpenAI-compat server | 2260 | Cline CLI + VS Code extension (no Node on host) |
 
 ## Container Types
 
@@ -435,6 +437,130 @@ code --remote ssh-remote+claude-my-stack /workspace/svc
 **Note:** The first VS Code server download (~186MB) can take a few minutes on slow connections. Subsequent connects are instant.
 
 **Safety:** Persistent containers stay connected even when you're working elsewhere. Forgotten VS Code windows can't accidentally reconnect to the wrong workspace.
+
+## Cline Profile
+
+The `cline` profile installs [Cline](https://cline.bot) inside a container — no Node.js on your host machine required. It supports two providers:
+
+- **Anthropic API** — standard API key, same as Claude Code
+- **LAN OpenAI-compatible server** — point at a local llama.cpp, Ollama, or similar server
+
+The Cline CLI and VS Code remote extension (`saoudrizwan.claude-dev`) share the same config inside the container, so configuring one configures both.
+
+### Prerequisites
+
+**For Anthropic API:** ensure `ANTHROPIC_API_KEY` is set in your environment or `~/.config/container-dev/env`.
+
+**For a LAN model server:**
+- The server must listen on `0.0.0.0` (not just `127.0.0.1`). For llama.cpp: `llama-server --host 0.0.0.0 --port 8080 --model your-model.gguf`
+- You need the server's **IP address** — `.local` mDNS hostnames do not resolve inside containers. Find it on your Mac:
+  ```bash
+  dns-sd -G v4 yourserver.local
+  ```
+
+### Setup
+
+Create the host config directory and files **before** creating the container:
+
+```bash
+mkdir -p ~/.config/container-dev/cline
+
+# For Anthropic API (default):
+echo "anthropic" > ~/.config/container-dev/cline/provider
+
+# For a LAN model server:
+echo "mini4" > ~/.config/container-dev/cline/provider   # any name you like
+cat > ~/.config/container-dev/cline/openai.json <<'EOF'
+{
+  "baseUrl": "http://192.168.3.120:8080/v1",
+  "modelId": "your-model-id",
+  "contextWindow": 131072,
+  "supportsImages": false
+}
+EOF
+```
+
+> **Use the IP address, not the hostname.** `.local` mDNS does not resolve inside the container. Get the IP with `dns-sd -G v4 yourserver.local` and put that in `baseUrl`.
+
+> **`contextWindow`** tells Cline the model's actual context limit. Without it, Cline falls back to a conservative default (~8k) and will truncate long conversations. Set it to the value your server reports.
+
+Then create the container:
+
+```bash
+container-dev create cline
+ssh cline-transient
+cline "say hello"
+```
+
+### Config seeding
+
+On each SSH login, `~/.cline/data/globalState.json` and `secrets.json` are automatically refreshed from your host config files. This means:
+
+- **Edit `openai.json` or `provider` on your Mac → re-login → change takes effect.** No container recreate needed.
+- If you created the container before the config files were in place, re-login is enough to pick them up.
+- If something looks wrong, you can force a reseed manually: `_seed_cline_config`
+
+### Switching providers
+
+The `provider` file sets the **default** active provider at login. Both providers are pre-configured in the container, so the VS Code extension's provider picker lets you switch mid-session without re-logging in. A re-login resets to whatever the `provider` file says.
+
+```bash
+# Switch default to LAN server
+echo "mini4" > ~/.config/container-dev/cline/provider
+
+# Switch back to Anthropic
+echo "anthropic" > ~/.config/container-dev/cline/provider
+
+# Then re-login to apply
+ssh cline-transient
+```
+
+### VS Code integration
+
+```bash
+container-dev create cline --persistent
+code --remote ssh-remote+cline-myproject /workspace/my-project
+```
+
+The Cline extension (`saoudrizwan.claude-dev`) installs automatically in the remote VS Code Server when you attach. It reads from the same `~/.cline/data/` directory as the CLI, so no separate auth setup is needed.
+
+> **"gpt-4o" label in the UI** — Cline displays "gpt-4o" as the model name for OpenAI-compatible providers regardless of which model is actually loaded. The `$0.00` cost confirms no cloud API is being called; inference is happening on your local server.
+
+### Troubleshooting: Cline
+
+**`error: Cannot connect to API`**
+
+1. Verify the server IP is reachable from the container:
+   ```bash
+   curl -s http://192.168.3.120:8080/v1/models | jq '.data[0].id'
+   ```
+   If this hangs or fails, check that the server is listening on `0.0.0.0` and that you're using the IP address, not a `.local` hostname.
+
+2. Check the seeded config looks right:
+   ```bash
+   cat ~/.cline/data/globalState.json | jq '{apiProvider, openAiBaseUrl}'
+   ```
+   If the values are wrong or null, run `_seed_cline_config` to force a reseed.
+
+**Config shows `anthropic` but you want the LAN model**
+
+The container was likely created before the `provider` file was set. Re-login is enough:
+```bash
+echo "mini4" > ~/.config/container-dev/cline/provider
+ssh cline-transient  # reseeds on login
+```
+
+**`cline auth` as a fallback**
+
+If automatic seeding fails for any reason, `cline auth` → "Bring your own provider" lets you configure interactively. What it writes to `~/.cline/data/` is identical to what the seeding produces, so it's safe to use and won't interfere with future reseeds.
+
+**Deprecation warnings on every response**
+
+```
+DeprecationWarning: AI SDK Warning (openai-compatible.chat / gpt-4o): ...
+```
+
+These are internal noise from Cline's bundled AI SDK and are harmless. They cannot be suppressed via environment variables. They will disappear when Cline updates its dependency.
 
 ## Troubleshooting
 
