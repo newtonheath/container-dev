@@ -42,7 +42,7 @@ ALL_CONTAINERS=$(echo "$RAW_LIST" | awk 'NR>1{print $1, $5}')
 FILTERED=""
 while IFS=' ' read -r name state; do
   [[ -z "$name" ]] && continue
-  if [[ "$name" =~ -transient$ ]] || [[ "$name" =~ ^(claude|opencode|pi)(-[a-z0-9]+)*-[a-z0-9]+$ ]]; then
+  if [[ "$name" =~ -transient$ ]] || [[ "$name" =~ ^(claude|opencode|pi|cline)(-[a-z0-9]+)*-[a-z0-9]+$ ]]; then
     FILTERED="${FILTERED}${name} ${state}"$'\n'
   fi
 done <<< "$ALL_CONTAINERS"
