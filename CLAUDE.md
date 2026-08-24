@@ -24,6 +24,12 @@ Pause/resume uses native Apple `container` CLI directly:
 - `bin/create.sh` — Builds image if needed, runs or resumes container, manages state, writes SSH config
 - `bin/delete.sh` — Permanently removes container, cleans up state and SSH config
 - `bin/list.sh` — Shows all containers (running and stopped) with status, reconciles stale entries
+- `lib/config.sh` — `yq` wrappers (`cfg_*`) over the YAML config, sourced by all three `bin/` scripts
+- `config/container-dev.yaml` — the profile registry: ports, backends, networks, auth detection,
+  reusable mount groups, and per-profile named configs (see `docs/plan-network-policy.md`)
+- `config/config.example.yaml` — template for `~/.config/container-dev/config.yaml`, a sparse
+  user-level override deep-merged on top of the repo config (`auth.force`, `defaults.size`,
+  network allowlist tweaks, etc.)
 - `profiles/<name>/Dockerfile` — Fedora 44 base, openssh-server, tool installation
 - `profiles/<name>/entrypoint.sh` — Copies SSH pubkey, writes config, starts sshd
 - `profiles/<name>/sshd_config` — Hardened SSH config (pubkey only, no password)
@@ -36,17 +42,37 @@ Pause/resume uses native Apple `container` CLI directly:
 |---------|------|---------|------|-----------|
 | `claude` | Claude Code | Claude API | Auto-detected (vertex/api/web) | 2222 |
 | `cline` | Cline | Anthropic API or OpenAI-compat | API key (`anthropic`) or endpoint URL (`mini4` or any named LAN server) | 2260 |
-| `opencode` | [OpenCode](https://opencode.ai) | Anthropic API | `ANTHROPIC_API_KEY` env var, seeded into `~/.config/opencode/opencode.json` via `{env:...}` substitution | 2230 |
+| `opencode` | [OpenCode](https://opencode.ai) | Anthropic API (default), Vertex (`--config work-vertex`) | `ANTHROPIC_API_KEY` env var by default; Vertex ADC mounted when `--config work-vertex` is given (see below) | 2230 |
 | `pi` | [Pi](https://pi.dev) | Anthropic API | `ANTHROPIC_API_KEY` env var, read directly by the `pi` CLI | 2240 |
 
-`opencode` and `pi` are independent of `CLAUDE_AUTH_TYPE`/vertex/web — they're
-separate tools with their own config formats, currently wired for API-key auth
-only (see `create.sh`'s `^(opencode|pi)$` block). The `cline` profile also
-bakes the Cline VS Code extension `.vsix` (fetched from Open VSX at build
-time) into the image; `entrypoint.sh` auto-installs it into
-`~/.vscode-server` once VS Code Server appears there on first Remote-SSH
-connect, so the chat panel shows up without a manual "Install in SSH: ..."
-step.
+`opencode` and `pi` are independent of `CLAUDE_AUTH_TYPE`/web — they're separate tools
+with their own config formats, currently wired for API-key auth by default (see
+`create.sh`'s `^(opencode|pi)$` block). `opencode` additionally supports `--config
+<name>` for multi-backend selection, declared under `profiles.opencode.configs` in
+`config/container-dev.yaml`:
+
+- `work-vertex` — Vertex ADC mount is wired up; **note:** `opencode.json`'s provider
+  config isn't auto-seeded for Vertex yet, so this currently only mounts the
+  credential — see `docs/plan-network-policy.md`.
+- `work-openai`, `home-local` — declared in the schema as the target shape, not yet
+  implemented; `create.sh` exits with a clear error if you pass either.
+
+Deliberately **not** offered: Claude Pro/Max subscription OAuth inside `opencode` —
+Anthropic's ToS (and a March 2026 legal takedown of OpenCode's bundled OAuth plugin)
+prohibit third-party use of that auth outside Claude Code/claude.ai. Pro/Max stays
+exclusive to the `claude` profile's `web` auth. Plain Anthropic API-key and Vertex auth
+are unaffected by that restriction and both remain fully supported.
+
+Both `claude` and `cline` bake their VS Code extension `.vsix` (fetched from Open VSX at
+build time) into the image; `entrypoint.sh` auto-installs it into `~/.vscode-server`
+once VS Code Server appears there on first Remote-SSH connect, so the panel shows up
+without a manual "Install in SSH: ..." step — including on transient containers, which
+get destroyed and recreated on every workspace switch and would otherwise lose it each
+time. `claude`'s extension (`Anthropic.claude-code`) ships a separate `.vsix` per
+OS/arch (bundles native binaries), so its Dockerfile picks the download matching the
+build host's architecture (`uname -m` → `linux-x64`/`linux-arm64`) rather than a single
+"latest" URL like `cline`'s. If you built `claude-img` before this was added, `container
+image rm claude-img` so the next `create` rebuilds it.
 
 ### Planned Profiles (Phase 3-4)
 
@@ -96,20 +122,25 @@ The `list` command reconciles stale entries: if a container was removed outside 
 
 ### Machine-Level Configuration
 
-Config file: `~/.config/container-dev/config`
+Config file: `~/.config/container-dev/config.yaml` (copy `config/config.example.yaml` to start).
+Deep-merged on top of `config/container-dev.yaml`'s `auth:` block; only the keys you set need
+to be present.
 
-```bash
-# Auto-detected on first run, or manually override:
-CLAUDE_AUTH_TYPE=vertex  # Options: vertex, api, web
-
-# Optional override (takes precedence):
-FORCE_CLAUDE_AUTH=vertex
+```yaml
+# Force a specific auth type instead of auto-detecting:
+auth:
+  force: vertex   # vertex|api|web
 ```
+
+Every `create.sh`/`list.sh`/`delete.sh` run re-evaluates this — there's no sticky cache, so
+removing `auth.force` (or deleting the ADC file) takes effect on the next run.
 
 ### Auto-Detection Logic
 
+Walks `auth.detect` in `config/container-dev.yaml`, in order, first match wins:
+
 1. If `~/.config/gcloud/application_default_credentials.json` exists → `vertex`
-2. Else if `ANTHROPIC_API_KEY` in env or `.env` → `api`
+2. Else if `ANTHROPIC_API_KEY` is set in the environment → `api`
 3. Else → `web` (browser OAuth fallback)
 
 ### Auth-Specific Volume Mounts
@@ -121,8 +152,11 @@ FORCE_CLAUDE_AUTH=vertex
 
 **Browser OAuth:**
 ```
-~/.config/container-dev/auth/claude → /root/.claude (rw, token persistence)
+~/.config/container-dev/auth/claude/claude.json       → /root/.claude.json (rw)
+~/.config/container-dev/auth/claude/.credentials.json → /root/.claude/.credentials.json (rw)
 ```
+Individual files, not a directory mount — a directory-level bind onto `/root/.claude`
+proved unreliable with this container runtime (silently failed to reattach on restart).
 
 **API Key:**
 - No additional mounts (key passed via env var)
@@ -175,9 +209,10 @@ bind-mounted (not the file). This means:
 
 Conditional based on detected auth type (see above).
 
-### Backend Mounts (Local profiles only)
+### Backend Mounts (Local-backend profiles only)
 
-For profiles matching `*-local` pattern:
+For profiles with `backend: local` in `config/container-dev.yaml` (not a naming-pattern
+match — see `cfg_profile_backend` in `lib/config.sh`):
 
 | Source (host) | Destination (container) | Mode |
 |---|---|---|
@@ -216,25 +251,23 @@ Host {container-name}
 
 ### Strategy
 
-- Each profile has a **base port** (defined in `profile_port()` in `create.sh`)
+- Each profile has a **base port** (`profiles.<name>.port` in `config/container-dev.yaml`,
+  read via `cfg_profile_port` in `lib/config.sh`)
 - Transient container uses base port
 - Persistent containers get next available port if base is taken
 - Auto-increments to avoid conflicts
 
 ### Port Map
 
-```bash
-profile_port() {
-  case "$1" in
-    claude)          echo 2222 ;;
-    opencode)        echo 2230 ;;
-    opencode-local)  echo 2231 ;;
-    pi)              echo 2240 ;;
-    pi-local)        echo 2241 ;;
-    cline)           echo 2260 ;;
-    *)               echo 2299 ;;
-  esac
-}
+```yaml
+# config/container-dev.yaml
+profiles:
+  claude:          { port: 2222, ... }
+  opencode:        { port: 2230, ... }
+  opencode-local:  { port: 2231, ... }
+  pi:              { port: 2240, ... }
+  pi-local:        { port: 2241, ... }
+  cline:           { port: 2260, ... }
 ```
 
 ## Environment Variables Passed to Container
@@ -255,7 +288,7 @@ These are used by `entrypoint.sh` to:
 ### Auth Env Vars (derived from `CLAUDE_AUTH_TYPE`)
 
 `CLAUDE_AUTH_TYPE` is the single user-facing auth control (`vertex`/`api`/`web`,
-auto-detected or forced via `FORCE_CLAUDE_AUTH`). `create.sh` translates it into
+auto-detected or forced via `auth.force` in `config.yaml`). `create.sh` translates it into
 the Claude Code built-in env vars the container actually needs — these are
 **not** stored in `settings.json`:
 
@@ -281,14 +314,28 @@ profiles/newtool/
 └── env.example (optional)
 ```
 
-### 2. Update Port Map
+### 2. Register the Profile
 
-Add case to `profile_port()` in `bin/create.sh`:
+Add an entry under `profiles:` in `config/container-dev.yaml`:
 
-```bash
-newtool)         echo 2250 ;;
-newtool-local)   echo 2251 ;;
+```yaml
+profiles:
+  newtool:
+    port: 2250
+    backend: claude   # or "local" for a *-local variant, see below
+    network: standard
+  newtool-local:
+    port: 2251
+    backend: local
+    network: offline
+    mounts: [models]
 ```
+
+`backend: local` is what makes `bin/create.sh` treat the profile as a `-local` variant
+(mounts `$CONFIG_DIR/models`) — no naming-pattern regex needed. If the tool supports
+multiple named auth/network configs selected at `create` time (see `opencode` in
+`config/container-dev.yaml` for the pattern), add a `configs:` map instead of/alongside
+the flat `network`/`mounts`.
 
 ### 3. Dockerfile Pattern
 
@@ -352,16 +399,19 @@ exec /usr/sbin/sshd -D
 
 ### 5. Auth Detection (for Claude-based backends)
 
-If your tool uses Claude as a backend, add detection logic in `create.sh`:
+Only the `claude` profile gets full `CLAUDE_AUTH_TYPE` detection (vertex/api/web) with
+its mounts — other profiles default to a plain `ANTHROPIC_API_KEY` env var (see
+`create.sh`'s `^(opencode|pi)$` block) and opt into more via named `configs:`.
+
+To let your tool use Vertex auth the same way `opencode`'s `work-vertex` config does:
+declare a config with `auth: vertex` under `profiles.<name>.configs` in
+`config/container-dev.yaml`, then in `create.sh` mirror the `OPENCODE_CONFIG_AUTH ==
+"vertex"` block — mount `cfg_auth_mounts vertex` when that config is selected:
 
 ```bash
 # In create.sh, volume mount section:
-if [[ "$PROFILE" =~ ^(claude|opencode|pi|newtool)$ ]]; then
-  case "$CLAUDE_AUTH_TYPE" in
-    vertex) ... ;;
-    api) ... ;;
-    web) ... ;;
-  esac
+if [[ "$PROFILE" == "newtool" && "$NEWTOOL_CONFIG_AUTH" == "vertex" ]]; then
+  while IFS= read -r line; do add_cfg_mount "$line"; done < <(cfg_auth_mounts vertex)
 fi
 ```
 
@@ -455,9 +505,10 @@ lsof -i :2223
 
 ### Auth Detection Issues
 
-Force a specific auth type:
-```bash
-echo "FORCE_CLAUDE_AUTH=api" >> ~/.config/container-dev/config
+Force a specific auth type by adding to `~/.config/container-dev/config.yaml`:
+```yaml
+auth:
+  force: api   # vertex|api|web
 ```
 
 ### SSH Config Pollution

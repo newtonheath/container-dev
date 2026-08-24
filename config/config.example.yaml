@@ -1,0 +1,23 @@
+# Example user-level override file.
+#
+# Copy to ~/.config/container-dev/config.yaml and edit. Only include the keys
+# you want to override — this is deep-merged on top of config/container-dev.yaml,
+# so anything you omit falls through to the repo defaults.
+
+# Force Claude auth instead of auto-detecting:
+# auth:
+#   force: vertex   # vertex|api|web
+
+# Prefer a different default resource size:
+# defaults:
+#   size: large
+
+# Widen a network's allowlist:
+# networks:
+#   standard:
+#     allow: ["api.anthropic.com", "*.googleapis.com", "github.com", "registry.npmjs.org", "internal.example.com"]
+
+# Pin a profile to a different network:
+# profiles:
+#   opencode:
+#     network: open

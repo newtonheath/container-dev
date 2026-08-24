@@ -102,4 +102,32 @@ if [[ -f /tmp/claude-host/settings.json ]]; then
 fi
 BASHRC
 
+# ---------------------------------------------------------------------------
+# Auto-install the baked-in Claude Code VS Code extension
+#
+# VS Code Server (the Remote-SSH host component) is downloaded and unpacked
+# by the VS Code client on first connection, into ~/.vscode-server/bin/<hash>/.
+# That timing is outside our control, so we poll for it in the background and
+# install the extension the moment it shows up — no manual "Install in SSH:
+# ..." click needed, on transient containers too (they get recreated on every
+# workspace switch, which would otherwise wipe ~/.vscode-server each time).
+# Runs once per container filesystem lifetime (skips if already installed,
+# e.g. after a pause/resume).
+# ---------------------------------------------------------------------------
+(
+  VSIX="/opt/vsix/claude-code.vsix"
+  [[ -f "$VSIX" ]] || exit 0
+  for _ in $(seq 1 720); do
+    CODE_SERVER_BIN=$(find /root/.vscode-server/bin -maxdepth 2 -name code-server -type f 2>/dev/null | head -n1)
+    if [[ -n "$CODE_SERVER_BIN" ]]; then
+      if ! "$CODE_SERVER_BIN" --list-extensions 2>/dev/null | grep -qi '^anthropic\.claude-code$'; then
+        "$CODE_SERVER_BIN" --install-extension "$VSIX" --force >/root/.claude-vsix-install.log 2>&1 || true
+      fi
+      break
+    fi
+    sleep 5
+  done
+) &
+disown
+
 exec /usr/sbin/sshd -D

@@ -10,6 +10,18 @@ TARGET="$BIN_DIR/container-dev"
 
 echo "Installing container-dev..."
 
+# yq (mikefarah) drives config/container-dev.yaml — required by every subcommand.
+if ! command -v yq >/dev/null 2>&1; then
+  if command -v brew >/dev/null 2>&1; then
+    echo "Installing yq (required for YAML config)..."
+    brew install yq
+  else
+    echo "⚠️  'yq' is required (https://github.com/mikefarah/yq) but Homebrew was not found."
+    echo "   Install yq manually, then re-run this script."
+    exit 1
+  fi
+fi
+
 # Create ~/.local/bin if it doesn't exist
 mkdir -p "$BIN_DIR"
 

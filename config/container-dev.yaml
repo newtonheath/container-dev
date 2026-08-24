@@ -1,0 +1,106 @@
+# container-dev profile registry (repo-level defaults, checked in).
+#
+# See docs/plan-network-policy.md for the design rationale.
+# User-level overrides live in ~/.config/container-dev/config.yaml (same
+# schema, sparse — see config/config.example.yaml) and are deep-merged on
+# top of this file. Precedence: this file -> user config.yaml -> CLI flags.
+version: 1
+
+defaults:
+  size: medium
+  network: standard
+  resources:
+    small:  { cpus: 2, mem: 2g }
+    medium: { cpus: 4, mem: 4g }
+    large:  { cpus: 6, mem: 8g }
+
+# Claude Code auth (claude profile only). `force` short-circuits detection;
+# `detect` is walked in order, first match wins, falling back to `web`.
+auth:
+  force: null                       # vertex|api|web|null
+  detect:
+    - { type: vertex, when_file: "$HOME/.config/gcloud/application_default_credentials.json" }
+    - { type: api,    when_env: ANTHROPIC_API_KEY }
+    - { type: web }
+
+# Reusable named mount groups: "src:dst[:mode]" strings, $HOME/$CONFIG_DIR/
+# $WORKSPACE expanded at use time. Referenced from profiles.<name>.mounts.
+mounts:
+  claude-projects:
+    - "$HOME/.claude/projects:/root/.claude/projects"
+  claude-settings:
+    - "$CONFIG_DIR/claude:/tmp/claude-host:ro"
+  models:
+    - "$CONFIG_DIR/models:/root/.cache/models:ro"
+
+# Auth-conditional mounts, keyed by auth type. Applied in addition to a
+# profile's plain `mounts:` groups when that auth type is resolved.
+auth_mounts:
+  vertex:
+    - "$HOME/.config/gcloud/application_default_credentials.json:/root/.config/gcloud/application_default_credentials.json:ro"
+  web:
+    - "$CONFIG_DIR/auth/claude/claude.json:/root/.claude.json"
+    - "$CONFIG_DIR/auth/claude/.credentials.json:/root/.claude/.credentials.json"
+
+# Egress allowlists — declared here, not yet enforced (Plan 2). Networks may
+# be selected per-profile or per named config (profiles.<p>.configs.<c>.network).
+networks:
+  standard:        { policy: default-deny, allow: ["api.anthropic.com", "*.googleapis.com", "github.com", "registry.npmjs.org"] }
+  openai-standard: { policy: default-deny, allow: ["api.openai.com", "chatgpt.com", "auth.openai.com", "github.com", "registry.npmjs.org"] }
+  offline:         { policy: deny-all, dns: false }
+  open:            { policy: allow-all }
+
+profiles:
+  claude:
+    port: 2222
+    backend: claude
+    network: standard
+    mounts: [claude-projects, claude-settings]
+
+  opencode:
+    port: 2230
+    backend: claude
+    network: standard
+    # Named configs, selected with `--config <name>`, generalizing the
+    # per-instance provider-switching pattern cline already uses. Each
+    # overrides this profile's auth/network/mounts. Only work-vertex is
+    # currently wired up in bin/create.sh — work-openai and home-local are
+    # declared here as the target shape but not yet functional (see
+    # docs/plan-network-policy.md, "Codex CLI — deferred").
+    configs:
+      work-vertex:
+        auth: vertex
+        network: standard
+      work-openai:
+        auth: openai-api
+        network: openai-standard
+      home-local:
+        auth: local
+        network: offline
+        mounts: [models]
+
+  opencode-local:
+    port: 2231
+    backend: local
+    network: offline
+    mounts: [models]
+
+  pi:
+    port: 2240
+    backend: claude
+    network: standard
+
+  pi-local:
+    port: 2241
+    backend: local
+    network: offline
+    mounts: [models]
+
+  cline:
+    port: 2260
+    backend: claude
+    network: standard
+    # cline's --config <name> is dynamic (arbitrary host directories under
+    # ~/.config/container-dev/cline/<name>/, not an enumerable set), so it
+    # is NOT modeled with `configs:` here — bin/create.sh keeps cline's
+    # existing directory-based resolution instead of cfg_profile_config_*.

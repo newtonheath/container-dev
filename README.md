@@ -46,6 +46,12 @@ ssh claude-criticalproject  # Dedicated container, never auto-replaced
 |---------|------|---------|------|----------|
 | `claude` | Claude Code | Claude API | 2222 | Main AI coding assistant (auth auto-detected) |
 | `cline` | Cline | Anthropic API or LAN OpenAI-compat server | 2260 | Cline CLI + VS Code extension (no Node on host) |
+| `opencode` | [OpenCode](https://opencode.ai) | Anthropic API key by default; Vertex via `--config work-vertex` | 2230 | Portable, provider-agnostic slash commands |
+| `pi` | [Pi](https://pi.dev) | Anthropic API | 2240 | Lightweight Anthropic-API-only assistant |
+
+Full profile registry (ports, auth, network policy, named configs) lives in
+[`config/container-dev.yaml`](config/container-dev.yaml) — see
+[CLAUDE.md](CLAUDE.md) for the schema.
 
 ## Container Types
 
@@ -231,10 +237,12 @@ If no gcloud ADC or API key is found, Claude Code will use browser OAuth on firs
 
 **Override detection:**
 
-Edit `~/.config/container-dev/config`:
-```bash
-FORCE_CLAUDE_AUTH=vertex  # or: api, web
+Copy `config/config.example.yaml` to `~/.config/container-dev/config.yaml` and set:
+```yaml
+auth:
+  force: vertex   # or: api, web
 ```
+This is re-evaluated on every `create`/`list`/`delete` run — no sticky cache.
 
 ### Model & effort configuration
 
@@ -436,6 +444,13 @@ code --remote ssh-remote+claude-my-stack /workspace/svc
 
 **Note:** The first VS Code server download (~186MB) can take a few minutes on slow connections. Subsequent connects are instant.
 
+**Claude Code extension:** baked into the `claude` image and auto-installed into the VS
+Code Server the moment it appears on first Remote-SSH connect — no manual "Install in
+SSH: ..." click needed, and it works on transient containers too (which get destroyed
+and recreated on every workspace switch, unlike persistent ones). If you built your
+`claude-img` before this was added, delete the image (`container image rm claude-img`)
+so the next `container-dev create claude` rebuilds it.
+
 **Safety:** Persistent containers stay connected even when you're working elsewhere. Forgotten VS Code windows can't accidentally reconnect to the wrong workspace.
 
 ## Cline Profile
@@ -599,9 +614,10 @@ source ~/.bashrc
 
 ### Wrong Claude auth method detected
 
-Override in `~/.config/container-dev/config`:
-```bash
-FORCE_CLAUDE_AUTH=api
+Override in `~/.config/container-dev/config.yaml`:
+```yaml
+auth:
+  force: api
 ```
 
 ### Port already in use
@@ -629,7 +645,8 @@ container-dev delete claude-transient
 - **Base image**: Fedora 44
 - **SSH**: Dedicated ed25519 keypair at `~/.config/container-dev/keys/`
 - **State tracking**: `~/.config/container-dev/state`
-- **Config**: `~/.config/container-dev/config`
+- **Config**: `config/container-dev.yaml` (repo defaults) deep-merged with
+  `~/.config/container-dev/config.yaml` (machine overrides, optional)
 
 See [CLAUDE.md](CLAUDE.md) for implementation details.
 

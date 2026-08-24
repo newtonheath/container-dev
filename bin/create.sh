@@ -15,23 +15,10 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFIG_DIR="$HOME/.config/container-dev"
 KEYS_DIR="$CONFIG_DIR/keys"
 STATE_FILE="$CONFIG_DIR/state"
-CONFIG_FILE="$CONFIG_DIR/config"
-CLAUDE_SETTINGS_SRC="$CONFIG_DIR/claude/settings.json"
 
-# ---------------------------------------------------------------------------
-# per-profile base port map
-# ---------------------------------------------------------------------------
-profile_port() {
-  case "$1" in
-    claude)          echo 2222 ;;
-    opencode)        echo 2230 ;;
-    opencode-local)  echo 2231 ;;
-    pi)              echo 2240 ;;
-    pi-local)        echo 2241 ;;
-    cline)           echo 2260 ;;
-    *)               echo 2299 ;;
-  esac
-}
+# shellcheck source=../lib/config.sh
+source "$PROJECT_DIR/lib/config.sh"
+cfg_validate
 
 # ---------------------------------------------------------------------------
 # ensure SSH config entry exists (restores it if cleaned up)
@@ -63,27 +50,15 @@ SSHEOF
 # detect Claude authentication method
 # ---------------------------------------------------------------------------
 detect_claude_auth() {
-  # Check for override in config
-  if [[ -f "$CONFIG_FILE" ]]; then
-    source "$CONFIG_FILE"
-    if [[ -n "${FORCE_CLAUDE_AUTH:-}" ]]; then
-      echo "$FORCE_CLAUDE_AUTH"
-      return
-    fi
-    if [[ -n "${CLAUDE_AUTH_TYPE:-}" ]]; then
-      echo "$CLAUDE_AUTH_TYPE"
-      return
-    fi
+  # auth.force in config/container-dev.yaml (or a user config.yaml override)
+  # short-circuits; otherwise walk auth.detect in declared order.
+  local forced
+  forced=$(cfg_auth_force)
+  if [[ -n "$forced" ]]; then
+    echo "$forced"
+    return
   fi
-
-  # Auto-detect
-  if [[ -f "$HOME/.config/gcloud/application_default_credentials.json" ]]; then
-    echo "vertex"
-  elif [[ -n "${ANTHROPIC_API_KEY:-}" ]] || grep -q "ANTHROPIC_API_KEY" "${PROFILE_DIR}/.env" 2>/dev/null; then
-    echo "api"
-  else
-    echo "web"
-  fi
+  cfg_auth_detect
 }
 
 # ---------------------------------------------------------------------------
@@ -107,10 +82,15 @@ Flags:
 Options:
   --name <slug>                 Container name suffix (auto-derived from workspace directory names
                                 if not provided)
-  --config <name>               Named Cline config (cline profile only). Reads config from
-                                ~/.config/container-dev/cline/<name>/ and names the container
-                                cline-<name>-* so different providers are distinguishable in lists.
-                                Without this flag the flat ~/.config/container-dev/cline/ is used.
+  --config <name>               Named per-instance config, for profiles that support it:
+                                  cline:    reads ~/.config/container-dev/cline/<name>/;
+                                            without this flag the flat
+                                            ~/.config/container-dev/cline/ is used.
+                                  opencode: selects a backend declared under
+                                            profiles.opencode.configs in
+                                            config/container-dev.yaml (currently: work-vertex).
+                                Names the container <profile>-<name>-* so different
+                                configs are distinguishable in lists.
   --size <small|medium|large>   Resource preset (default: medium)
   --cpus <n>                    CPU cores (overrides --size)
   --mem  <size>                 Memory limit, e.g. 4g (overrides --size)
@@ -154,7 +134,7 @@ CPUS=""
 MEM=""
 SSH_PORT=""
 CUSTOM_NAME=""
-CLINE_CONFIG=""
+CONFIG_NAME=""
 WORKSPACES=()
 
 while [[ $# -gt 0 ]]; do
@@ -166,7 +146,7 @@ while [[ $# -gt 0 ]]; do
     --cpus)           CPUS="$2"; shift 2 ;;
     --mem)            MEM="$2"; shift 2 ;;
     --port)           SSH_PORT="$2"; shift 2 ;;
-    --config)         CLINE_CONFIG="$2"; shift 2 ;;
+    --config)         CONFIG_NAME="$2"; shift 2 ;;
     -*)
       echo "ERROR: unknown option '$1'" >&2
       usage
@@ -215,12 +195,13 @@ fi
 # container naming
 # ---------------------------------------------------------------------------
 
-# For cline with --config <name>, the name prefix becomes "cline-<name>"
-# so containers are self-describing: cline-claude-transient, cline-mini4-myproject.
-# IMAGE_NAME stays cline-img (same Dockerfile regardless of config).
+# With --config <name>, the name prefix becomes "<profile>-<name>" so
+# containers are self-describing: cline-claude-transient, cline-mini4-myproject,
+# opencode-work-vertex-mystack. IMAGE_NAME stays <profile>-img (same Dockerfile
+# regardless of config).
 NAME_PREFIX="$PROFILE"
-if [[ "$PROFILE" == "cline" && -n "$CLINE_CONFIG" ]]; then
-  NAME_PREFIX="cline-${CLINE_CONFIG}"
+if [[ -n "$CONFIG_NAME" ]]; then
+  NAME_PREFIX="${PROFILE}-${CONFIG_NAME}"
 fi
 
 if [[ "$PERSISTENT" == true ]]; then
@@ -252,6 +233,45 @@ if [[ ! -d "$PROFILE_DIR" ]]; then
   echo "Available profiles:" >&2
   ls -1 "$PROJECT_DIR/profiles" | grep -v '^_' | sed 's/^/  /' >&2
   exit 1
+fi
+
+if ! cfg_profile_exists "$PROFILE"; then
+  echo "ERROR: profile '$PROFILE' is not declared in config/container-dev.yaml" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# named-config resolution (opencode's --config; cline keeps its own dynamic
+# per-directory resolution below, since its config names aren't an
+# enumerable YAML set — see config/container-dev.yaml's cline entry)
+# ---------------------------------------------------------------------------
+OPENCODE_CONFIG_AUTH="none"
+if [[ -n "$CONFIG_NAME" && "$PROFILE" != "cline" ]]; then
+  if ! cfg_has ".profiles.\"$PROFILE\".configs"; then
+    echo "ERROR: profile '$PROFILE' has no named configs (see config/container-dev.yaml)" >&2
+    exit 1
+  fi
+  if ! cfg_profile_config_exists "$PROFILE" "$CONFIG_NAME"; then
+    echo "ERROR: unknown config '$CONFIG_NAME' for profile '$PROFILE'" >&2
+    echo "  Known configs: $(cfg_list ".profiles.\"$PROFILE\".configs | keys" | paste -sd',' - | sed 's/,/, /g')" >&2
+    exit 1
+  fi
+  if [[ "$PROFILE" == "opencode" ]]; then
+    OPENCODE_CONFIG_AUTH=$(cfg_profile_config_auth "$PROFILE" "$CONFIG_NAME")
+    case "$OPENCODE_CONFIG_AUTH" in
+      vertex) ;;  # wired up below
+      openai-api|local)
+        echo "ERROR: opencode config '$CONFIG_NAME' (auth: $OPENCODE_CONFIG_AUTH) is declared" >&2
+        echo "  in config/container-dev.yaml but not yet implemented — see the" >&2
+        echo "  'Codex CLI — deferred' note in docs/plan-network-policy.md." >&2
+        exit 1
+        ;;
+      *)
+        echo "ERROR: opencode config '$CONFIG_NAME' has unknown auth type '$OPENCODE_CONFIG_AUTH'" >&2
+        exit 1
+        ;;
+    esac
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -340,13 +360,7 @@ fi
 CLAUDE_AUTH_TYPE="none"
 if [[ "$PROFILE" == "claude" ]]; then
   CLAUDE_AUTH_TYPE=$(detect_claude_auth)
-
-  # Save detected auth to config file
-  mkdir -p "$CONFIG_DIR"
-  if ! grep -q "CLAUDE_AUTH_TYPE=" "$CONFIG_FILE" 2>/dev/null; then
-    echo "CLAUDE_AUTH_TYPE=$CLAUDE_AUTH_TYPE" >> "$CONFIG_FILE"
-    echo "Detected Claude auth: $CLAUDE_AUTH_TYPE (saved to config)"
-  fi
+  echo "Detected Claude auth: $CLAUDE_AUTH_TYPE"
 fi
 
 # ---------------------------------------------------------------------------
@@ -356,8 +370,8 @@ CLINE_PROVIDER="none"
 if [[ "$PROFILE" == "cline" ]]; then
   # --config <name> uses ~/.config/container-dev/cline/<name>/ as config dir
   # No --config flag uses the flat ~/.config/container-dev/cline/ (default)
-  if [[ -n "$CLINE_CONFIG" ]]; then
-    CLINE_HOST_DIR="$CONFIG_DIR/cline/$CLINE_CONFIG"
+  if [[ -n "$CONFIG_NAME" ]]; then
+    CLINE_HOST_DIR="$CONFIG_DIR/cline/$CONFIG_NAME"
   else
     CLINE_HOST_DIR="$CONFIG_DIR/cline"
   fi
@@ -376,18 +390,13 @@ fi
 # resource limits
 # ---------------------------------------------------------------------------
 if [[ -n "$SIZE" ]]; then
-  case "$SIZE" in
-    small)  CPUS=2; MEM="2g" ;;
-    medium) CPUS=4; MEM="4g" ;;
-    large)  CPUS=6; MEM="8g" ;;
-    *)
-      echo "ERROR: unknown size '$SIZE' (small|medium|large)" >&2
-      exit 1
-      ;;
-  esac
+  read -r CPUS MEM <<< "$(cfg_resource "$SIZE")"
 fi
-CPUS="${CPUS:-4}"
-MEM="${MEM:-4g}"
+if [[ -z "$CPUS" || -z "$MEM" ]]; then
+  read -r DEFAULT_CPUS DEFAULT_MEM <<< "$(cfg_resource "$(cfg_get '.defaults.size' 'medium')")"
+  CPUS="${CPUS:-$DEFAULT_CPUS}"
+  MEM="${MEM:-$DEFAULT_MEM}"
+fi
 
 # ---------------------------------------------------------------------------
 # port assignment
@@ -403,7 +412,7 @@ port_reserved() {
 }
 
 if [[ -z "$SSH_PORT" ]]; then
-  BASE_PORT=$(profile_port "$PROFILE")
+  BASE_PORT=$(cfg_profile_port "$PROFILE")
   SSH_PORT=$BASE_PORT
   while port_reserved "$SSH_PORT"; do
     ((SSH_PORT++))
@@ -490,13 +499,25 @@ fi
 
 MOUNT_ARGS+=(--volume "${KEY_FILE}.pub:/tmp/pubkey/authorized_keys:ro")
 
-# Auth-specific mounts (Claude Code profile only)
+# add_cfg_mount <src:dst[:mode]> — split a config-declared mount line into a
+# --volume arg. Paths in config/container-dev.yaml never contain ':', so a
+# plain split is safe.
+add_cfg_mount() {
+  local line="$1" src dst mode
+  IFS=':' read -r src dst mode <<< "$line"
+  if [[ -n "$mode" ]]; then
+    MOUNT_ARGS+=(--volume "${src}:${dst}:${mode}")
+  else
+    MOUNT_ARGS+=(--volume "${src}:${dst}")
+  fi
+}
+
+# Auth-specific mounts (Claude Code profile, and opencode's work-vertex config)
 if [[ "$PROFILE" == "claude" ]]; then
   case "$CLAUDE_AUTH_TYPE" in
     vertex)
-      ADC_PATH="$HOME/.config/gcloud/application_default_credentials.json"
-      if [[ -f "$ADC_PATH" ]]; then
-        MOUNT_ARGS+=(--volume "${ADC_PATH}:/root/.config/gcloud/application_default_credentials.json:ro")
+      if [[ -f "$HOME/.config/gcloud/application_default_credentials.json" ]]; then
+        while IFS= read -r line; do add_cfg_mount "$line"; done < <(cfg_auth_mounts vertex)
       else
         echo "WARN: Vertex auth detected but gcloud ADC not found" >&2
         echo "  Run 'gcloud auth application-default login' to set up credentials" >&2
@@ -508,15 +529,26 @@ if [[ "$PROFILE" == "claude" ]]; then
       # Directory-level bind mounts onto /root/.claude have proven unreliable
       # with this container runtime (silently fail to attach on restart), so
       # mount the individual files that actually hold login state instead.
-      CONFIG_JSON="$AUTH_DIR/claude.json"
-      [[ -f "$CONFIG_JSON" ]] || echo '{}' > "$CONFIG_JSON"
-      MOUNT_ARGS+=(--volume "${CONFIG_JSON}:/root/.claude.json")
-
-      CREDENTIALS_JSON="$AUTH_DIR/.credentials.json"
-      [[ -f "$CREDENTIALS_JSON" ]] || echo '{}' > "$CREDENTIALS_JSON"
-      MOUNT_ARGS+=(--volume "${CREDENTIALS_JSON}:/root/.claude/.credentials.json")
+      while IFS= read -r line; do
+        src="${line%%:*}"
+        [[ -f "$src" ]] || echo '{}' > "$src"
+        add_cfg_mount "$line"
+      done < <(cfg_auth_mounts web)
       ;;
   esac
+fi
+
+if [[ "$PROFILE" == "opencode" && "$OPENCODE_CONFIG_AUTH" == "vertex" ]]; then
+  if [[ -f "$HOME/.config/gcloud/application_default_credentials.json" ]]; then
+    while IFS= read -r line; do add_cfg_mount "$line"; done < <(cfg_auth_mounts vertex)
+  else
+    echo "WARN: --config $CONFIG_NAME uses Vertex auth but gcloud ADC not found" >&2
+    echo "  Run 'gcloud auth application-default login' to set up credentials" >&2
+  fi
+  echo "NOTE: --config $CONFIG_NAME mounts the Vertex ADC file, but opencode's" >&2
+  echo "  provider config (opencode.json) does not yet seed a vertex provider" >&2
+  echo "  automatically — see the Plan 1 scope note in" >&2
+  echo "  docs/plan-network-policy.md." >&2
 fi
 
 # Claude Code settings mount (host-defined model + effort defaults, LIVE)
@@ -528,7 +560,10 @@ fi
 # edits are picked up live. entrypoint.sh refreshes a writable copy into
 # /root/.claude/settings.json and exports effort on each login (see below).
 if [[ "$PROFILE" == "claude" ]]; then
-  mkdir -p "$(dirname "$CLAUDE_SETTINGS_SRC")"
+  CLAUDE_SETTINGS_MOUNT=$(cfg_mount_group claude-settings | head -1)
+  CLAUDE_SETTINGS_DIR="${CLAUDE_SETTINGS_MOUNT%%:*}"
+  CLAUDE_SETTINGS_SRC="$CLAUDE_SETTINGS_DIR/settings.json"
+  mkdir -p "$CLAUDE_SETTINGS_DIR"
   if [[ ! -f "$CLAUDE_SETTINGS_SRC" ]]; then
     cat > "$CLAUDE_SETTINGS_SRC" <<'SETTINGS'
 {
@@ -543,14 +578,13 @@ if [[ "$PROFILE" == "claude" ]]; then
 }
 SETTINGS
   fi
-  MOUNT_ARGS+=(--volume "$(dirname "$CLAUDE_SETTINGS_SRC"):/tmp/claude-host:ro")
+  while IFS= read -r line; do add_cfg_mount "$line"; done < <(cfg_mount_group claude-settings)
 fi
 
 # Claude projects mount (for cost tracking via codeburn)
 if [[ "$PROFILE" == "claude" ]]; then
-  CLAUDE_PROJECTS_DIR="$HOME/.claude/projects"
-  mkdir -p "$CLAUDE_PROJECTS_DIR"
-  MOUNT_ARGS+=(--volume "${CLAUDE_PROJECTS_DIR}:/root/.claude/projects")
+  mkdir -p "$HOME/.claude/projects"
+  while IFS= read -r line; do add_cfg_mount "$line"; done < <(cfg_mount_group claude-projects)
 fi
 
 # Cline config mount (host-defined provider + credentials, LIVE)
@@ -563,11 +597,10 @@ if [[ "$PROFILE" == "cline" ]]; then
 
 fi
 
-# Model mounts (local profiles)
-if [[ "$PROFILE" =~ -local$ ]]; then
-  MODEL_DIR="$CONFIG_DIR/models"
-  mkdir -p "$MODEL_DIR"
-  MOUNT_ARGS+=(--volume "${MODEL_DIR}:/root/.cache/models:ro")
+# Model mounts (local-backend profiles, per config/container-dev.yaml)
+if [[ "$(cfg_profile_backend "$PROFILE")" == "local" ]]; then
+  mkdir -p "$CONFIG_DIR/models"
+  while IFS= read -r line; do add_cfg_mount "$line"; done < <(cfg_profile_mounts "$PROFILE")
 fi
 
 # ---------------------------------------------------------------------------
@@ -663,9 +696,12 @@ echo "   SSH port:  $SSH_PORT"
 if [[ "$CLAUDE_AUTH_TYPE" != "none" ]]; then
   echo "   Auth:      Claude ($CLAUDE_AUTH_TYPE)"
 fi
+if [[ "$OPENCODE_CONFIG_AUTH" != "none" ]]; then
+  echo "   Config:    $CONFIG_NAME (auth: $OPENCODE_CONFIG_AUTH)"
+fi
 if [[ "$CLINE_PROVIDER" != "none" ]]; then
-  if [[ -n "$CLINE_CONFIG" ]]; then
-    echo "   Provider:  Cline ($CLINE_CONFIG / $CLINE_PROVIDER)"
+  if [[ -n "$CONFIG_NAME" ]]; then
+    echo "   Provider:  Cline ($CONFIG_NAME / $CLINE_PROVIDER)"
   else
     echo "   Provider:  Cline ($CLINE_PROVIDER)"
   fi

@@ -3,8 +3,16 @@ set -euo pipefail
 
 # List all container-dev containers with status (running and stopped)
 
-STATE_FILE="$HOME/.config/container-dev/state"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CONFIG_DIR="$HOME/.config/container-dev"
+STATE_FILE="$CONFIG_DIR/state"
 SSH_CONFIG="$HOME/.ssh/config"
+
+# shellcheck source=../lib/config.sh
+source "$PROJECT_DIR/lib/config.sh"
+cfg_validate
+PROFILE_NAMES_RE=$(cfg_profile_names | paste -sd'|' -)
 
 echo "Container-dev Environments"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -42,7 +50,7 @@ ALL_CONTAINERS=$(echo "$RAW_LIST" | awk 'NR>1{print $1, $5}')
 FILTERED=""
 while IFS=' ' read -r name state; do
   [[ -z "$name" ]] && continue
-  if [[ "$name" =~ -transient$ ]] || [[ "$name" =~ ^(claude|opencode|pi|cline)(-[a-z0-9]+)*-[a-z0-9]+$ ]]; then
+  if [[ "$name" =~ -transient$ ]] || [[ "$name" =~ ^(${PROFILE_NAMES_RE})(-[a-z0-9]+)*-[a-z0-9]+$ ]]; then
     FILTERED="${FILTERED}${name} ${state}"$'\n'
   fi
 done <<< "$ALL_CONTAINERS"

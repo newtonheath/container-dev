@@ -7,8 +7,16 @@
 #
 set -euo pipefail
 
-STATE_FILE="$HOME/.config/container-dev/state"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+CONFIG_DIR="$HOME/.config/container-dev"
+STATE_FILE="$CONFIG_DIR/state"
 SSH_CONFIG="$HOME/.ssh/config"
+
+# shellcheck source=../lib/config.sh
+source "$PROJECT_DIR/lib/config.sh"
+cfg_validate
+PROFILE_NAMES_RE=$(cfg_profile_names | paste -sd'|' -)
 
 usage() {
   cat <<'EOF'
@@ -50,7 +58,7 @@ if [[ -z "$CONTAINER_STATE" ]]; then
   echo "Container '$CONTAINER_NAME' not found."
   echo ""
   echo "Available containers:"
-  container list --all 2>/dev/null | awk 'NR>1{print $1}' | grep -E -- '-(transient|[a-z0-9]+(-[a-z0-9]+)*)$' | sed 's/^/  /' || echo "  (none)"
+  container list --all 2>/dev/null | awk 'NR>1{print $1}' | grep -E -- "^(${PROFILE_NAMES_RE})(-[a-z0-9]+)*-(transient|[a-z0-9]+)$" | sed 's/^/  /' || echo "  (none)"
   exit 1
 fi
 
