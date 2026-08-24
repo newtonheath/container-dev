@@ -36,14 +36,23 @@ Pause/resume uses native Apple `container` CLI directly:
 |---------|------|---------|------|-----------|
 | `claude` | Claude Code | Claude API | Auto-detected (vertex/api/web) | 2222 |
 | `cline` | Cline | Anthropic API or OpenAI-compat | API key (`anthropic`) or endpoint URL (`mini4` or any named LAN server) | 2260 |
+| `opencode` | [OpenCode](https://opencode.ai) | Anthropic API | `ANTHROPIC_API_KEY` env var, seeded into `~/.config/opencode/opencode.json` via `{env:...}` substitution | 2230 |
+| `pi` | [Pi](https://pi.dev) | Anthropic API | `ANTHROPIC_API_KEY` env var, read directly by the `pi` CLI | 2240 |
+
+`opencode` and `pi` are independent of `CLAUDE_AUTH_TYPE`/vertex/web — they're
+separate tools with their own config formats, currently wired for API-key auth
+only (see `create.sh`'s `^(opencode|pi)$` block). The `cline` profile also
+bakes the Cline VS Code extension `.vsix` (fetched from Open VSX at build
+time) into the image; `entrypoint.sh` auto-installs it into
+`~/.vscode-server` once VS Code Server appears there on first Remote-SSH
+connect, so the chat panel shows up without a manual "Install in SSH: ..."
+step.
 
 ### Planned Profiles (Phase 3-4)
 
 | Profile | Tool | Backend | Auth | Port Base |
 |---------|------|---------|------|-----------|
-| `opencode` | Opencode | Claude API | Auto-detected | 2230 |
 | `opencode-local` | Opencode | llama.cpp | N/A | 2231 |
-| `pi` | Pi | Claude API | Auto-detected | 2240 |
 | `pi-local` | Pi | llama.cpp | N/A | 2241 |
 
 ## Container Lifecycle
@@ -397,15 +406,16 @@ CONFIG
 - [x] Multi-provider config seeding (Anthropic API key + OpenAI-compat)
 - [x] Host config directory mount (`~/.config/container-dev/cline/`)
 - [x] Live re-seed on each login (no recreate needed for config changes)
+- [x] Cline VS Code extension baked into image, auto-installed on first Remote-SSH connect
 
 ### Phase 3: Opencode Profiles 🚧
-- [ ] `profiles/opencode/` - Opencode with Claude
+- [x] `profiles/opencode/` - Opencode with Anthropic API key auth
 - [ ] `profiles/opencode-local/` - Opencode with llama.cpp
 - [ ] Model download helpers
 - [ ] Testing
 
 ### Phase 4: Pi Profiles 🚧
-- [ ] `profiles/pi/` - Pi with Claude
+- [x] `profiles/pi/` - Pi with Anthropic API key auth
 - [ ] `profiles/pi-local/` - Pi with llama.cpp
 
 ### Phase 5: Polish 🚧

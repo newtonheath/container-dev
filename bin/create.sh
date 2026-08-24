@@ -96,7 +96,7 @@ Usage: container-dev create <profile> [dirs...] [--persistent] [options]
 Creates a new container or resumes a stopped one.
 
 Arguments:
-  profile     Profile name: claude, cline
+  profile     Profile name: claude, cline, opencode, pi
   dirs        Optional directories to mount (default: current directory)
               Each is mounted as /workspace/<dirname> in the container
 
@@ -338,7 +338,7 @@ fi
 # detect auth for Claude-based profiles
 # ---------------------------------------------------------------------------
 CLAUDE_AUTH_TYPE="none"
-if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
+if [[ "$PROFILE" == "claude" ]]; then
   CLAUDE_AUTH_TYPE=$(detect_claude_auth)
 
   # Save detected auth to config file
@@ -490,8 +490,8 @@ fi
 
 MOUNT_ARGS+=(--volume "${KEY_FILE}.pub:/tmp/pubkey/authorized_keys:ro")
 
-# Auth-specific mounts (Claude-based profiles)
-if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
+# Auth-specific mounts (Claude Code profile only)
+if [[ "$PROFILE" == "claude" ]]; then
   case "$CLAUDE_AUTH_TYPE" in
     vertex)
       ADC_PATH="$HOME/.config/gcloud/application_default_credentials.json"
@@ -527,7 +527,7 @@ fi
 # file vanishes inside the container. A directory mount is inode-stable, so host
 # edits are picked up live. entrypoint.sh refreshes a writable copy into
 # /root/.claude/settings.json and exports effort on each login (see below).
-if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
+if [[ "$PROFILE" == "claude" ]]; then
   mkdir -p "$(dirname "$CLAUDE_SETTINGS_SRC")"
   if [[ ! -f "$CLAUDE_SETTINGS_SRC" ]]; then
     cat > "$CLAUDE_SETTINGS_SRC" <<'SETTINGS'
@@ -547,7 +547,7 @@ SETTINGS
 fi
 
 # Claude projects mount (for cost tracking via codeburn)
-if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
+if [[ "$PROFILE" == "claude" ]]; then
   CLAUDE_PROJECTS_DIR="$HOME/.claude/projects"
   mkdir -p "$CLAUDE_PROJECTS_DIR"
   MOUNT_ARGS+=(--volume "${CLAUDE_PROJECTS_DIR}:/root/.claude/projects")
@@ -580,7 +580,7 @@ CONTAINER_ENV=(
 )
 
 # Auth-specific env vars
-if [[ "$PROFILE" =~ ^(claude|opencode|pi)$ ]]; then
+if [[ "$PROFILE" == "claude" ]]; then
   case "$CLAUDE_AUTH_TYPE" in
     vertex)
       # Prefer the canonical Vertex settings from the machine-level env file
@@ -614,6 +614,13 @@ if [[ "$PROFILE" == "cline" ]]; then
     # openai-compat (mini4 etc): no auth env var needed; URL and model come
     # from the mounted openai.json which entrypoint.sh reads at login time.
   esac
+fi
+
+# Auth env var for OpenCode/Pi profiles (Anthropic API key only, for now —
+# these tools have their own provider/config systems, unrelated to Claude
+# Code's settings.json or CLAUDE_AUTH_TYPE, so they're kept independent).
+if [[ "$PROFILE" =~ ^(opencode|pi)$ ]]; then
+  CONTAINER_ENV+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}")
 fi
 
 # ---------------------------------------------------------------------------
