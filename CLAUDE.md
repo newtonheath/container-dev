@@ -339,15 +339,16 @@ the flat `network`/`mounts`.
 
 ### 3. Dockerfile Pattern
 
+Build `FROM container-dev-base:latest` (see `profiles/_base/Dockerfile`) — it already
+has Fedora 44 + the common tooling (git, compilers, etc.) + SSH server set up, with
+`WORKDIR /workspace` and `EXPOSE 22`. Don't repeat that layer per profile; it's a single
+source of truth specifically so profiles can't drift out of sync with each other (as
+happened before this existed — one profile was silently missing a package the others
+had). No `sshd_config` needed in the profile directory either — the base image copies
+one shared `profiles/_base/sshd_config`.
+
 ```dockerfile
-FROM fedora:44
-
-# Base tooling (git, ssh, compilers, etc.)
-RUN dnf -y update && dnf -y install openssh-server ... && dnf clean all
-
-# SSH setup
-RUN ssh-keygen -A && mkdir -p /root/.ssh && chmod 700 /root/.ssh && passwd -d root
-COPY sshd_config /etc/ssh/sshd_config
+FROM container-dev-base:latest
 
 # Install tool
 RUN npm install -g your-tool  # or pip, binary, etc.
@@ -356,10 +357,14 @@ RUN npm install -g your-tool  # or pip, binary, etc.
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-WORKDIR /workspace
-EXPOSE 22
 CMD ["/usr/local/bin/entrypoint.sh"]
 ```
+
+`bin/create.sh` builds `container-dev-base` automatically (once, if missing) before
+building the profile image — no manual step needed. Like profile images, it isn't
+auto-rebuilt when `profiles/_base/Dockerfile` changes; force that with `container image
+rm container-dev-base` (then the profile images too, since they were built from the old
+base).
 
 ### 4. Entrypoint Pattern
 

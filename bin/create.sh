@@ -669,6 +669,23 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# build base image if needed
+# ---------------------------------------------------------------------------
+# Every profile Dockerfile builds `FROM container-dev-base:latest` instead of
+# repeating the Fedora + common-tooling + SSH layer — see profiles/_base/.
+# Like profile images, this isn't auto-rebuilt on Dockerfile changes; force a
+# rebuild with `container image rm container-dev-base` (and then the profile
+# images too, since they were built FROM the old base).
+BASE_IMAGE_NAME="container-dev-base"
+BASE_DOCKERFILE="$PROJECT_DIR/profiles/_base/Dockerfile"
+if container image list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$BASE_IMAGE_NAME"; then
+  echo ">> Base image '$BASE_IMAGE_NAME' exists"
+else
+  echo ">> Building $BASE_IMAGE_NAME from $BASE_DOCKERFILE ..."
+  container build -t "$BASE_IMAGE_NAME" --file "$BASE_DOCKERFILE" "$PROJECT_DIR/profiles/_base"
+fi
+
+# ---------------------------------------------------------------------------
 # build image if needed
 # ---------------------------------------------------------------------------
 if container image list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$IMAGE_NAME"; then

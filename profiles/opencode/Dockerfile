@@ -1,53 +1,6 @@
 # Fedora 44 dev container — OpenCode (https://opencode.ai)
 # Auth: Anthropic API key (ANTHROPIC_API_KEY), passed through to opencode.json
-FROM docker.io/library/fedora:44
-
-# --- base tooling -------------------------------------------------------
-RUN dnf -y update && \
-    dnf -y install \
-        git \
-        ripgrep \
-        curl \
-        wget \
-        tar \
-        gzip \
-        which \
-        sudo \
-        ca-certificates \
-        nodejs \
-        npm \
-        python3 \
-        python3-pip \
-        gcc \
-        gcc-c++ \
-        make \
-        less \
-        vim \
-        nano \
-        procps-ng \
-        iputils \
-        iproute \
-        bind-utils \
-        openssh-clients \
-        jq \
-        unzip \
-        zip \
-        file \
-        tree \
-        rsync \
-        gnupg2 \
-        pkgconf-pkg-config \
-        cmake \
-        htop \
-        hostname \
-        openssh-server && \
-    dnf clean all
-
-# --- SSH server ----------------------------------------------------------
-RUN ssh-keygen -A && \
-    mkdir -p /root/.ssh && chmod 700 /root/.ssh && \
-    passwd -d root
-COPY sshd_config /etc/ssh/sshd_config
+FROM container-dev-base:latest
 
 # --- OpenCode --------------------------------------------------------------
 RUN npm install -g opencode-ai
@@ -56,10 +9,7 @@ RUN npm install -g opencode-ai
 RUN mkdir -p /root/.config/opencode
 
 # --- workspace -----------------------------------------------------------
-WORKDIR /workspace
-
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-EXPOSE 22
 CMD ["/usr/local/bin/entrypoint.sh"]
