@@ -74,6 +74,7 @@ profiles:
       work-openai:
         auth: openai-api
         network: openai-standard
+        model: openai/gpt-4.1
       home-local:
         auth: local
         network: offline

@@ -149,6 +149,7 @@ cfg_auth_detect() {
 # (arbitrary host directories, not an enumerable YAML set).
 cfg_profile_config_exists()  { cfg_has ".profiles.\"$1\".configs.\"$2\""; }
 cfg_profile_config_auth()    { cfg_get ".profiles.\"$1\".configs.\"$2\".auth"; }
+cfg_profile_config_model()   { cfg_get ".profiles.\"$1\".configs.\"$2\".model"; }
 cfg_profile_config_network() { cfg_get ".profiles.\"$1\".configs.\"$2\".network" "$(cfg_profile_network "$1")"; }
 cfg_profile_config_mount_groups() { cfg_list ".profiles.\"$1\".configs.\"$2\".mounts"; }
 
