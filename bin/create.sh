@@ -71,7 +71,7 @@ Usage: container-dev create <profile> [dirs...] [--persistent] [options]
 Creates a new container or resumes a stopped one.
 
 Arguments:
-  profile     Profile name: claude, cline, opencode, pi
+  profile     Profile name: claude, codex, cline, opencode, pi
   dirs        Optional directories to mount (default: current directory)
               Each is mounted as /workspace/<dirname> in the container
 
@@ -119,6 +119,10 @@ Examples:
   cd ~/work/important-project
   container-dev create claude --persistent
   ssh claude-importantproject
+
+  # OpenAI Codex with host-persisted ChatGPT/API authentication
+  container-dev create codex --persistent
+  ssh codex-importantproject
 
 EOF
   exit 0
@@ -363,6 +367,22 @@ if [[ "$PROFILE" == "claude" ]]; then
   echo "Detected Claude auth: $CLAUDE_AUTH_TYPE"
 fi
 
+# Codex keeps its own CLI/IDE state under CODEX_HOME. Mounting the complete
+# directory preserves file-backed ChatGPT login state, config, sessions, and
+# other local Codex data across transient container replacement.
+CODEX_HOME_HOST=""
+CODEX_AUTH_TYPE="none"
+if [[ "$PROFILE" == "codex" ]]; then
+  CODEX_HOME_HOST="${CODEX_HOME:-$HOME/.codex}"
+  if [[ "$CODEX_HOME_HOST" != /* ]]; then
+    echo "ERROR: CODEX_HOME must be an absolute path: $CODEX_HOME_HOST" >&2
+    exit 1
+  fi
+  mkdir -p "$CODEX_HOME_HOST"
+  chmod 700 "$CODEX_HOME_HOST" 2>/dev/null || true
+  [[ -f "$CODEX_HOME_HOST/auth.json" ]] && CODEX_AUTH_TYPE="cached"
+fi
+
 # ---------------------------------------------------------------------------
 # detect provider for Cline profile
 # ---------------------------------------------------------------------------
@@ -454,6 +474,10 @@ load_env_file() {
       if [[ "$line" =~ = ]]; then
         local key="${line%%=*}"
         local val="${line#*=}"
+        if [[ "$PROFILE" == "codex" && ( "$key" == "CODEX_HOME" || "$key" == "CODEX_AUTH_TYPE" ) ]]; then
+          echo "   NOTE: ignoring $key from $file; it is managed by container-dev"
+          continue
+        fi
         # Expand $VAR or ${VAR} references from host environment
         if [[ "$val" =~ ^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$ ]]; then
           local ref="${BASH_REMATCH[1]}"
@@ -467,6 +491,10 @@ load_env_file() {
       else
         # Just a variable name, expand from host environment
         local varname="$line"
+        if [[ "$PROFILE" == "codex" && ( "$varname" == "CODEX_HOME" || "$varname" == "CODEX_AUTH_TYPE" ) ]]; then
+          echo "   NOTE: ignoring $varname from $file; it is managed by container-dev"
+          continue
+        fi
         local varvalue="${!varname:-}"
         if [[ -n "$varvalue" ]]; then
           ENV_FILE_ARGS+=("-e" "${varname}=${varvalue}")
@@ -478,11 +506,36 @@ load_env_file() {
   fi
 }
 
+# Check both the ambient shell and the already-expanded env-file arguments.
+# This lets users keep secrets in ~/.config/container-dev/env without making
+# create.sh source that file into the host shell.
+env_args_has_value() {
+  local name="$1" entry
+  [[ -n "${!name:-}" ]] && return 0
+  for entry in "${ENV_FILE_ARGS[@]}"; do
+    [[ "$entry" == "$name="* ]] || continue
+    [[ -n "${entry#*=}" ]] && return 0
+  done
+  return 1
+}
+
 # Load user-level env file first (personal settings)
 load_env_file "$USER_ENV_FILE"
 
 # Load profile-level env file second (can override user settings)
 load_env_file "$ENV_FILE"
+
+if [[ "$PROFILE" == "codex" && "$CODEX_AUTH_TYPE" == "none" ]]; then
+  if [[ -f "$CODEX_HOME_HOST/auth.json" ]]; then
+    CODEX_AUTH_TYPE="cached"
+  elif env_args_has_value CODEX_ACCESS_TOKEN || env_args_has_value OPENAI_API_KEY; then
+    CODEX_AUTH_TYPE="token"
+  else
+    CODEX_AUTH_TYPE="setup-required"
+    echo "WARN: Codex has no cached auth.json or token in the environment" >&2
+    echo "  Set OPENAI_API_KEY/CODEX_ACCESS_TOKEN or run 'codex login --device-auth' inside the container" >&2
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # volume mounts
@@ -597,6 +650,12 @@ if [[ "$PROFILE" == "cline" ]]; then
 
 fi
 
+# Codex CLI and its VS Code extension share CODEX_HOME. Keep this mount
+# writable so device-auth or API-key login can refresh auth.json in place.
+if [[ "$PROFILE" == "codex" ]]; then
+  MOUNT_ARGS+=(--volume "${CODEX_HOME_HOST}:/root/.codex")
+fi
+
 # Model mounts (local-backend profiles, per config/container-dev.yaml)
 if [[ "$(cfg_profile_backend "$PROFILE")" == "local" ]]; then
   mkdir -p "$CONFIG_DIR/models"
@@ -656,6 +715,13 @@ if [[ "$PROFILE" =~ ^(opencode|pi)$ ]]; then
   CONTAINER_ENV+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}")
 fi
 
+if [[ "$PROFILE" == "codex" ]]; then
+  CONTAINER_ENV+=(-e "CODEX_HOME=/root/.codex")
+  CONTAINER_ENV+=(-e "CODEX_AUTH_TYPE=$CODEX_AUTH_TYPE")
+  [[ -n "${OPENAI_API_KEY:-}" ]] && CONTAINER_ENV+=(-e "OPENAI_API_KEY=$OPENAI_API_KEY")
+  [[ -n "${CODEX_ACCESS_TOKEN:-}" ]] && CONTAINER_ENV+=(-e "CODEX_ACCESS_TOKEN=$CODEX_ACCESS_TOKEN")
+fi
+
 # ---------------------------------------------------------------------------
 # find Dockerfile
 # ---------------------------------------------------------------------------
@@ -712,6 +778,9 @@ echo "   Resources: cpus=$CPUS mem=$MEM"
 echo "   SSH port:  $SSH_PORT"
 if [[ "$CLAUDE_AUTH_TYPE" != "none" ]]; then
   echo "   Auth:      Claude ($CLAUDE_AUTH_TYPE)"
+fi
+if [[ "$CODEX_AUTH_TYPE" != "none" ]]; then
+  echo "   Auth:      Codex ($CODEX_AUTH_TYPE)"
 fi
 if [[ "$OPENCODE_CONFIG_AUTH" != "none" ]]; then
   echo "   Config:    $CONFIG_NAME (auth: $OPENCODE_CONFIG_AUTH)"

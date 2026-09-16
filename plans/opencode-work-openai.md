@@ -1,6 +1,6 @@
 # Plan: `codex` Profile (OpenAI Codex CLI)
 
-Status: **draft**
+Status: **implemented**
 
 `opencode --config work-openai` is on ice. This plan supersedes it with a clean
 `codex` profile that mirrors the `claude` profile architecture.
@@ -9,19 +9,18 @@ Status: **draft**
 
 The `claude` profile is the template:
 - `FROM container-dev-base` (Fedora 44 + common tooling + SSH)
-- Tool installed via npm at build time
+- Tool installed with the official standalone Codex installer at build time
 - VS Code extension `.vsix` baked into the image; background watcher in
   `entrypoint.sh` installs it once VS Code Server appears (no manual step)
-- Credentials forwarded as env vars via `~/.config/container-dev/env` +
-  explicit `-e` flags in `create.sh`
-- Tool config seeded at first SSH login (not at build time)
+- Codex's `CODEX_HOME` mounted from the host, preserving file-backed login state,
+  config, sessions, and cache across container replacement
+- Optional `OPENAI_API_KEY` or `CODEX_ACCESS_TOKEN` bootstrap via
+  `~/.config/container-dev/env`
 
-Codex CLI is `@openai/codex` (npm). Its VS Code extension is **`openai.chatgpt`**
-on Open VSX (display name: "Codex – OpenAI's coding agent"), available as a single
-`.vsix` — not arch-split like Claude Code's, same shape as Cline's. Download key
-in the Open VSX JSON response is `files.download`.
-
-Node is already present on Fedora 44 via the base image.
+Codex's VS Code extension is **`openai.chatgpt`** on Open VSX and is staged as an
+architecture-matched `.vsix` in the image. Node is already present on Fedora 44,
+but the CLI uses the standalone installer rather than relying on npm package
+naming.
 
 ## Goal
 
@@ -33,45 +32,52 @@ ssh codex-transient
 
 Container boots with:
 - `codex` CLI on PATH
-- `OPENAI_API_KEY` visible in interactive SSH sessions
-- `~/.codex/config.toml` seeded with model, sandbox policy, and reasoning effort
+- Host `CODEX_HOME` available at `/root/.codex`
+- ChatGPT login state available when stored in file-backed `auth.json`
+- `OPENAI_API_KEY` or `CODEX_ACCESS_TOKEN` available when configured
 - VS Code sidebar panel (`openai.chatgpt`) auto-installed on first Remote-SSH
   connect, without any manual "Install in SSH" step
 
 ## Credentials and configuration
 
-**`OPENAI_API_KEY`**: add as a bare name in `~/.config/container-dev/env` — the
-existing `load_env_file` mechanism already forwards it. `create.sh` also passes it
-explicitly via `-e` with a warning if unset.
+**ChatGPT account login**: Codex CLI and its IDE extension share cached login
+details. Configure `cli_auth_credentials_store = "file"` in the host's
+`~/.codex/config.toml` before running `codex login`, or run
+`codex login --device-auth` after connecting to the container. A macOS keychain
+entry is not directly readable from the Linux container.
 
-**Model and reasoning effort**: codex reads `~/.codex/config.toml`, not env vars.
-`entrypoint.sh` seeds this file on first login (guarded by `[[ ! -f ]]`, same
-pattern as opencode). Two optional passthrough env vars drive the seed:
+**`OPENAI_API_KEY`**: add as a bare name or `OPENAI_API_KEY=value` in
+`~/.config/container-dev/env`. The existing env-file mechanism forwards it, and
+the entrypoint uses it to create a Codex login when no cached `auth.json` exists.
+API-key usage is billed through the OpenAI API rather than a ChatGPT subscription.
 
-| Env var | Config.toml key | Default if unset |
-|---|---|---|
-| `CODEX_MODEL` | `model` | omitted (codex uses its own default) |
-| `CODEX_REASONING_EFFORT` | `reasoning_effort` | omitted |
-
-**Sandbox**: in a container the container itself is the sandbox boundary. Seed
-`sandbox_permissions = ["disk-full-read-access", "disk-full-write-access"]` in
-config.toml so codex doesn't re-prompt for every file operation. This is the
-`danger-full-access` equivalent from the CLI flag, expressed in config form.
+**Configuration**: Codex reads `~/.codex/config.toml`. Current settings such as
+`model`, `model_reasoning_effort`, and `sandbox_mode` are deliberately owned by
+the mounted host config rather than being overwritten by the container entrypoint.
 
 ## Required Changes
 
-### 1. `profiles/codex/` — new profile directory
+### 1. `profiles/codex/` — implemented profile directory
 
 **`Dockerfile`**:
 ```dockerfile
 FROM container-dev-base:latest
 
-RUN npm install -g @openai/codex
+RUN curl -fsSL https://chatgpt.com/codex/install.sh | \
+      CODEX_HOME=/opt/codex-installer-home \
+      CODEX_INSTALL_DIR=/usr/local/bin \
+      CODEX_NON_INTERACTIVE=1 sh
 
-# VS Code extension — single .vsix (not arch-split, same shape as Cline)
+# VS Code extension — choose the native Linux architecture from Open VSX
 RUN mkdir -p /opt/vsix && \
-    VSIX_URL=$(curl -fsSL https://open-vsx.org/api/openai/chatgpt | \
-      python3 -c "import json,sys; print(json.load(sys.stdin)['files']['download'])") && \
+    ARCH="$(uname -m)" && \
+    case "$ARCH" in \
+      x86_64)  VSIX_PLATFORM=linux-x64 ;; \
+      aarch64) VSIX_PLATFORM=linux-arm64 ;; \
+      *) exit 1 ;; \
+    esac && \
+    VSIX_URL=$(curl -fsSL https://open-vsx.org/api/openai/chatgpt/latest | \
+      python3 -c "import json,sys; print(json.load(sys.stdin)['downloads']['$VSIX_PLATFORM'])") && \
     curl -fsSL -o /opt/vsix/codex.vsix "$VSIX_URL"
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -82,18 +88,11 @@ CMD ["/usr/local/bin/entrypoint.sh"]
 
 **`entrypoint.sh`**:
 - SSH key copy (standard)
-- MOTD: profile=codex, tool=Codex CLI, backend=OpenAI API
+- MOTD: profile=codex, tool=Codex CLI, and resolved auth state
 - PS1 + `cd /workspace`
-- `.container_env` dump — captures `OPENAI_API_KEY`, `CODEX_MODEL`,
-  `CODEX_REASONING_EFFORT`, and everything else from the env files
-- Config seeding (first-login guard `[[ ! -f ~/.codex/config.toml ]]`):
-  ```toml
-  # seeded by container-dev entrypoint.sh
-  sandbox_permissions = ["disk-full-read-access", "disk-full-write-access"]
-  ```
-  If `CODEX_MODEL` is set, append `model = "<value>"`.
-  If `CODEX_REASONING_EFFORT` is set, append `reasoning_effort = "<value>"`.
-  Use string concatenation into the file — no jq/yq needed for TOML this simple.
+- `.container_env` dump — captures the configured environment for SSH sessions
+- Auth bootstrap from a mounted `auth.json`, `CODEX_ACCESS_TOKEN`, or
+  `OPENAI_API_KEY`; otherwise the MOTD explains how to use device auth
 - Background VS Code extension watcher (mirrors claude's pattern exactly):
   polls for `code-server`, installs `/opt/vsix/codex.vsix` once, checks
   extension ID `openai.chatgpt`
@@ -118,36 +117,27 @@ no lib/config.sh changes needed.
 ### 3. `bin/create.sh`
 
 - Add `codex` to the profile list in `usage()` and the examples.
-- Add a codex env block:
-  ```bash
-  if [[ "$PROFILE" == "codex" ]]; then
-    if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-      echo "WARN: OPENAI_API_KEY is not set — add it to ~/.config/container-dev/env" >&2
-    fi
-    CONTAINER_ENV+=(-e "OPENAI_API_KEY=${OPENAI_API_KEY:-}")
-    [[ -n "${CODEX_MODEL:-}" ]]            && CONTAINER_ENV+=(-e "CODEX_MODEL=$CODEX_MODEL")
-    [[ -n "${CODEX_REASONING_EFFORT:-}" ]] && CONTAINER_ENV+=(-e "CODEX_REASONING_EFFORT=$CODEX_REASONING_EFFORT")
-  fi
-  ```
-- Add `codex` to the auth-display summary block at container launch:
-  `"   Auth:      OpenAI API key"` (skip the `CLAUDE_AUTH_TYPE` path).
-- No auth-detection logic — codex is API-key only.
+- Add a writable `$CODEX_HOME:/root/.codex` mount and pass `CODEX_HOME`,
+  `CODEX_AUTH_TYPE`, `OPENAI_API_KEY`, and `CODEX_ACCESS_TOKEN` as applicable.
+- Resolve cached auth after env files are loaded, so secrets can remain in the
+  existing host env file without being sourced into the host shell.
 
 ### 4. `CLAUDE.md` — document the new profile
 
 - Add `codex` row to the Profiles table (tool: Codex CLI, backend: OpenAI API,
-  auth: `OPENAI_API_KEY`, port: 2270).
-- Add short note on optional `CODEX_MODEL` / `CODEX_REASONING_EFFORT` env vars.
+  auth: file-backed ChatGPT login or `OPENAI_API_KEY`, port: 2270).
+- Add notes on ChatGPT file-backed login, device auth, API-key bootstrap, and
+  the `CODEX_HOME` mount.
 
 ## Verification
 
 - `bash -n` on all modified scripts.
 - `git diff --check`.
-- `container build` completes for `codex-img` (npm install + vsix download).
+- `container build` completes for `codex-img` (standalone installer + native VSIX download).
 - `container-dev create codex` boots and SSH connects as `ssh codex-transient`.
 - `echo $OPENAI_API_KEY` inside container returns the key.
 - `codex --version` works.
-- `~/.codex/config.toml` exists with `sandbox_permissions` set after first login.
+- `~/.codex/auth.json` is reused when file-backed ChatGPT auth is configured.
 - VS Code Remote-SSH installs `openai.chatgpt` sidebar extension without manual steps.
 - End-to-end: run a `codex` prompt inside the container.
 

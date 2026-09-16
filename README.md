@@ -5,6 +5,7 @@ Containerized development environments for macOS using Apple's `container` CLI. 
 ## Features
 
 - **Claude Code in a container**: Isolated coding assistant with auto-detected auth (Vertex AI, API key, or browser OAuth)
+- **OpenAI Codex in a container**: Codex CLI + VS Code extension with persistent ChatGPT/API authentication state
 - **Cline in a container**: Cline CLI + VS Code extension, no Node.js on your host — supports Anthropic API or any LAN OpenAI-compatible server
 - **Transient by default**: Drop-in/drop-out workspace switching with auto-cleanup
 - **Persistent opt-in**: Long-lived containers for important projects
@@ -45,6 +46,7 @@ ssh claude-criticalproject  # Dedicated container, never auto-replaced
 | Profile | Tool | Backend | Port | Use Case |
 |---------|------|---------|------|----------|
 | `claude` | Claude Code | Claude API | 2222 | Main AI coding assistant (auth auto-detected) |
+| `codex` | OpenAI Codex CLI | OpenAI | 2270 | Codex CLI + VS Code extension (ChatGPT or API-key auth) |
 | `cline` | Cline | Anthropic API or LAN OpenAI-compat server | 2260 | Cline CLI + VS Code extension (no Node on host) |
 | `opencode` | [OpenCode](https://opencode.ai) | Anthropic API key by default; Vertex via `--config work-vertex` | 2230 | Portable, provider-agnostic slash commands |
 | `pi` | [Pi](https://pi.dev) | Anthropic API | 2240 | Lightweight Anthropic-API-only assistant |
@@ -315,6 +317,58 @@ applies again — the override wins "only when set."
 > `.claude/settings.local.json` or the `claude --model <m> --effort <level>`
 > launch flags.
 
+## Codex Profile
+
+The `codex` profile installs the OpenAI Codex CLI and the `openai.chatgpt` VS Code
+extension inside the container:
+
+```bash
+container-dev create codex
+ssh codex-transient
+codex
+```
+
+The host's Codex state directory is mounted read-write at `/root/.codex`. It uses
+`$CODEX_HOME` when set, otherwise `~/.codex`, so file-backed login state, config,
+sessions, and the local Codex cache survive transient container replacement.
+
+### ChatGPT account authentication
+
+For a portable login, configure Codex to store credentials in its file-backed
+state and log in on the host (if Codex is installed there):
+
+```toml
+# ~/.codex/config.toml
+cli_auth_credentials_store = "file"
+```
+
+```bash
+codex login
+container-dev create codex
+```
+
+Alternatively, connect to the container and complete the device login there:
+
+```bash
+ssh codex-transient
+codex login --device-auth
+```
+
+The container cannot read a macOS keychain entry directly. If the host login is
+stored only in the keychain, use the file-backed setting above or log in inside
+the container.
+
+### OpenAI API key authentication
+
+Put `OPENAI_API_KEY` (or `CODEX_ACCESS_TOKEN` for trusted automation) in
+`~/.config/container-dev/env` as a variable name or `KEY=value`. The entrypoint
+uses it to bootstrap Codex login when no cached `auth.json` exists. API-key
+usage is billed through the OpenAI API rather than a ChatGPT subscription.
+
+Codex configuration is read from `~/.codex/config.toml`. Useful settings include
+`model`, `model_reasoning_effort`, and `sandbox_mode`; the container boundary
+means the normal Codex sandbox can be configured there according to your needs.
+
 ## Commands
 
 ### `container-dev create <profile> [dirs...] [--persistent]`
@@ -443,6 +497,18 @@ code --remote ssh-remote+claude-my-stack /workspace/svc
 ```
 
 **Note:** The first VS Code server download (~186MB) can take a few minutes on slow connections. Subsequent connects are instant.
+
+**Codex extension:** baked into the `codex` image and auto-installed into the
+VS Code Server on the first Remote-SSH connection. Use the generated host name,
+for example:
+
+```bash
+container-dev create codex --persistent
+code --remote ssh-remote+codex-myproject /workspace/my-project
+```
+
+If the image was built before Codex support was added, remove `codex-img` so the
+next `container-dev create codex` rebuilds it.
 
 **Claude Code extension:** baked into the `claude` image and auto-installed into the VS
 Code Server the moment it appears on first Remote-SSH connect — no manual "Install in

@@ -26,6 +26,7 @@ Commands:
 
 Profiles:
   claude           Claude Code (auth auto-detected)
+  codex            OpenAI Codex CLI (ChatGPT or API-key auth)
   opencode         Opencode with Claude backend
   opencode-local   Opencode with local llama.cpp
   pi               Pi with Claude backend

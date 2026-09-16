@@ -57,6 +57,11 @@ profiles:
     network: standard
     mounts: [claude-projects, claude-settings]
 
+  codex:
+    port: 2270
+    backend: openai
+    network: openai-standard
+
   opencode:
     port: 2230
     backend: claude

@@ -41,6 +41,7 @@ Pause/resume uses native Apple `container` CLI directly:
 | Profile | Tool | Backend | Auth | Port Base |
 |---------|------|---------|------|-----------|
 | `claude` | Claude Code | Claude API | Auto-detected (vertex/api/web) | 2222 |
+| `codex` | OpenAI Codex CLI | OpenAI API | File-backed ChatGPT login, API key, or device auth | 2270 |
 | `cline` | Cline | Anthropic API or OpenAI-compat | API key (`anthropic`) or endpoint URL (`mini4` or any named LAN server) | 2260 |
 | `opencode` | [OpenCode](https://opencode.ai) | Anthropic API (default), Vertex (`--config work-vertex`) | `ANTHROPIC_API_KEY` env var by default; Vertex ADC mounted when `--config work-vertex` is given (see below) | 2230 |
 | `pi` | [Pi](https://pi.dev) | Anthropic API | `ANTHROPIC_API_KEY` env var, read directly by the `pi` CLI | 2240 |
@@ -63,7 +64,7 @@ prohibit third-party use of that auth outside Claude Code/claude.ai. Pro/Max sta
 exclusive to the `claude` profile's `web` auth. Plain Anthropic API-key and Vertex auth
 are unaffected by that restriction and both remain fully supported.
 
-Both `claude` and `cline` bake their VS Code extension `.vsix` (fetched from Open VSX at
+`claude`, `cline`, and `codex` bake their VS Code extension `.vsix` (fetched from Open VSX at
 build time) into the image; `entrypoint.sh` auto-installs it into `~/.vscode-server`
 once VS Code Server appears there on first Remote-SSH connect, so the panel shows up
 without a manual "Install in SSH: ..." step — including on transient containers, which
@@ -73,6 +74,14 @@ OS/arch (bundles native binaries), so its Dockerfile picks the download matching
 build host's architecture (`uname -m` → `linux-x64`/`linux-arm64`) rather than a single
 "latest" URL like `cline`'s. If you built `claude-img` before this was added, `container
 image rm claude-img` so the next `create` rebuilds it.
+
+The `codex` profile mounts the host `$CODEX_HOME` (default `~/.codex`) read-write
+at `/root/.codex`, allowing the Codex CLI and its VS Code extension to share
+file-backed login state, configuration, sessions, and cache. The entrypoint can
+bootstrap from `CODEX_ACCESS_TOKEN` or `OPENAI_API_KEY`; otherwise use
+`codex login --device-auth` inside the container. A macOS keychain login is not
+automatically visible inside the Linux container, so portable host auth should use
+`cli_auth_credentials_store = "file"` in `~/.codex/config.toml`.
 
 ### Planned Profiles (Phase 3-4)
 
@@ -263,6 +272,7 @@ Host {container-name}
 # config/container-dev.yaml
 profiles:
   claude:          { port: 2222, ... }
+  codex:           { port: 2270, ... }
   opencode:        { port: 2230, ... }
   opencode-local:  { port: 2231, ... }
   pi:              { port: 2240, ... }
@@ -278,6 +288,8 @@ profiles:
 WORKSPACE_PATH=/Users/you/path/to/workspace
 CONTAINER_NAME=claude-importantproject
 CLAUDE_AUTH_TYPE=vertex
+CODEX_HOME=/root/.codex
+CODEX_AUTH_TYPE=cached
 ```
 
 These are used by `entrypoint.sh` to:
@@ -301,6 +313,11 @@ CLOUD_ML_REGION=global
 # CLAUDE_AUTH_TYPE=api →
 ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+For the `codex` profile, `create.sh` also passes `CODEX_HOME=/root/.codex` and
+`CODEX_AUTH_TYPE`, plus any `OPENAI_API_KEY` or `CODEX_ACCESS_TOKEN` supplied by
+the shell or env files. The host Codex directory is mounted separately because
+it contains the CLI/IDE shared login state.
 
 ## Adding a New Profile
 
@@ -463,7 +480,9 @@ CONFIG
 - [x] Live re-seed on each login (no recreate needed for config changes)
 - [x] Cline VS Code extension baked into image, auto-installed on first Remote-SSH connect
 
-### Phase 3: Opencode Profiles 🚧
+### Phase 3: Codex and Opencode Profiles 🚧
+- [x] `profiles/codex/` - Codex CLI + VS Code extension
+- [x] File-backed ChatGPT auth state and API-key bootstrap
 - [x] `profiles/opencode/` - Opencode with Anthropic API key auth
 - [ ] `profiles/opencode-local/` - Opencode with llama.cpp
 - [ ] Model download helpers

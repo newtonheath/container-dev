@@ -1,8 +1,8 @@
 # Implementation Status - container-dev
 
-**Last Updated:** 2026-06-30
+**Last Updated:** 2026-09-16
 
-## Current State: Phase 1 & 2 Complete, Debugging macOS Compatibility
+## Current State: Core profiles implemented; macOS compatibility verification ongoing
 
 ### ✅ Completed
 
@@ -21,6 +21,7 @@
 - [x] Unified `claude` profile in `profiles/claude/`
 - [x] Machine-level config at `~/.config/container-dev/config`
 - [x] Backward compatibility (old profiles still work)
+- [x] OpenAI Codex profile with CLI, persistent auth state, and VS Code extension
 - [x] README.md - Complete rewrite
 - [x] CLAUDE.md - Architecture documentation
 
@@ -53,7 +54,9 @@
 
 ### 📋 Next Steps (When Debugging Complete)
 
-**Phase 3: Opencode Profiles**
+**Phase 3: Codex and Opencode Profiles**
+- [x] Create `profiles/codex/` - Codex CLI with ChatGPT/API auth
+- [x] Auto-install `openai.chatgpt` for VS Code Remote-SSH
 - [ ] Create `profiles/opencode/` - Opencode with Claude backend
 - [ ] Create `profiles/opencode-local/` - Opencode with llama.cpp
 - [ ] Add llama.cpp installation to Dockerfile
